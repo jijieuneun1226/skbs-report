@@ -133,85 +133,48 @@ DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# [중요] 세션 상태를 사용하여 선택한 필터 값을 유지 (뷰어 모드에서도 반영되도록)
-if 'filter_settings' not in st.session_state:
-    st.session_state.filter_settings = {
-        'channels': sorted(df_raw['판매채널'].unique()),
-        'years': [sorted(df_raw['년'].unique(), reverse=True)[0]],
-        'quarters': sorted(df_raw['분기'].unique()),
-        'months': sorted(df_raw['월'].unique()),
-        'cats': sorted(df_raw['제품군'].unique()),
-        'products': sorted(df_raw['제품명'].unique())
-    }
+# [중요] 뷰어가 보게 될 '기본값'을 세션에 고정
+if 'sel_years' not in st.session_state:
+    st.session_state.sel_years = [2024] # 뷰어에게 2024년을 기본으로 보여주고 싶다면 여기서 수정
+if 'sel_channels' not in st.session_state:
+    st.session_state.sel_channels = sorted(df_raw['판매채널'].unique())
+if 'sel_quarters' not in st.session_state:
+    st.session_state.sel_quarters = sorted(df_raw['분기'].unique())
+if 'sel_cats' not in st.session_state:
+    st.session_state.sel_cats = sorted(df_raw['제품군'].unique())
+if 'sel_products' not in st.session_state:
+    st.session_state.sel_products = sorted(df_raw['제품명'].unique())
 
-# 관리자 모드일 때만 사이드바 위젯 표시
+# 관리자 모드일 때만 필터 값 수정 가능
 if is_edit_mode:
     with st.sidebar:
-        st.header("🔍 데이터 필터링")
-        st.success("✅ 관리자 수정 모드")
+        st.header("⚙️ 관리자 필터 설정")
+        st.session_state.sel_channels = st.multiselect("판매채널", sorted(df_raw['판매채널'].unique()), default=st.session_state.sel_channels)
+        st.session_state.sel_years = st.multiselect("년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=st.session_state.sel_years)
+        st.session_state.sel_quarters = st.multiselect("분기 선택", sorted(df_raw['분기'].unique()), default=st.session_state.sel_quarters)
         
-        # 0. 채널 선택
-        all_channels = sorted(df_raw['판매채널'].unique())
-        st.session_state.filter_settings['channels'] = st.multiselect(
-            "0️⃣ 판매채널 선택", all_channels, default=st.session_state.filter_settings['channels']
-        )
-        df_s0 = df_raw[df_raw['판매채널'].isin(st.session_state.filter_settings['channels'])]
-        
-        # 1. 년도 선택
-        curr_years = sorted(df_s0['년'].unique(), reverse=True)
-        st.session_state.filter_settings['years'] = st.multiselect(
-            "1️⃣ 년도 선택", curr_years, default=st.session_state.filter_settings['years']
-        )
-        df_s1 = df_s0[df_s0['년'].isin(st.session_state.filter_settings['years'])]
-        
-        # 2. 분기 선택
-        curr_quarters = sorted(df_s1['분기'].unique())
-        st.session_state.filter_settings['quarters'] = st.multiselect(
-            "2️⃣ 분기 선택", curr_quarters, default=st.session_state.filter_settings['quarters']
-        )
-        
-        # 3. 월 선택 (분기 연동)
         q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         avail_m = []
-        for q in st.session_state.filter_settings['quarters']: avail_m.extend(q_to_m[q])
-        avail_m = sorted([m for m in avail_m if m in df_s1['월'].unique()])
-        st.session_state.filter_settings['months'] = st.multiselect(
-            "3️⃣ 월 선택", avail_m, default=[m for m in st.session_state.filter_settings['months'] if m in avail_m]
-        )
-        df_s2 = df_s1[df_s1['월'].isin(st.session_state.filter_settings['months'])]
+        for q in st.session_state.sel_quarters: avail_m.extend(q_to_m[q])
+        st.session_state.sel_months = st.multiselect("월 선택", sorted(avail_m), default=sorted(avail_m))
         
-        # 4. 제품군 선택
-        curr_cats = sorted(df_s2['제품군'].unique())
-        st.session_state.filter_settings['cats'] = st.multiselect(
-            "4️⃣ 제품군 선택", curr_cats, default=[c for c in st.session_state.filter_settings['cats'] if c in curr_cats]
-        )
-        df_s3 = df_s2[df_s2['제품군'].isin(st.session_state.filter_settings['cats'])]
-        
-        # 5. 제품명 선택
-        curr_products = sorted(df_s3['제품명'].unique())
-        st.session_state.filter_settings['products'] = st.multiselect(
-            "5️⃣ 제품명 선택", curr_products, default=[p for p in st.session_state.filter_settings['products'] if p in curr_products]
-        )
+        st.session_state.sel_cats = st.multiselect("제품군 선택", sorted(df_raw['제품군'].unique()), default=st.session_state.sel_cats)
+        st.session_state.sel_products = st.multiselect("제품명 선택", sorted(df_raw['제품명'].unique()), default=st.session_state.sel_products)
+else:
+    # 뷰어 모드일 때 선택된 분기에 맞춰 월 목록 자동 생성
+    q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
+    sel_months = []
+    for q in st.session_state.sel_quarters: sel_months.extend(q_to_m[q])
+    st.session_state.sel_months = sel_months
 
-# [최종 데이터 필터링] 뷰어 모드/관리자 모드 공통 적용
-sel_channels = st.session_state.filter_settings['channels']
-sel_years = st.session_state.filter_settings['years']
-sel_quarters = st.session_state.filter_settings['quarters']
-sel_months = st.session_state.filter_settings['months']
-sel_cats = st.session_state.filter_settings['cats']
-sel_products = st.session_state.filter_settings['products']
-
-# 년도 필터 (성과 요약용)
-df_year_filtered = df_raw[df_raw['년'].isin(sel_years)]
-
-# 최종 필터 적용
-df_final = df_raw[
-    (df_raw['판매채널'].isin(sel_channels)) &
-    (df_raw['년'].isin(sel_years)) &
-    (df_raw['분기'].isin(sel_quarters)) &
-    (df_raw['월'].isin(sel_months)) &
-    (df_raw['제품군'].isin(sel_cats)) &
-    (df_raw['제품명'].isin(sel_products))
+# 최종 데이터 필터링 (세션에 저장된 값 기준)
+df_year_filtered = df_raw[df_raw['년'].isin(st.session_state.sel_years)]
+df_final = df_year_filtered[
+    (df_year_filtered['판매채널'].isin(st.session_state.sel_channels)) &
+    (df_year_filtered['분기'].isin(st.session_state.sel_quarters)) &
+    (df_year_filtered['월'].isin(st.session_state.sel_months)) &
+    (df_year_filtered['제품군'].isin(st.session_state.sel_cats)) &
+    (df_year_filtered['제품명'].isin(st.session_state.sel_products))
 ]
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성 (요청하신 그대로 유지)
@@ -368,5 +331,6 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
 
 
