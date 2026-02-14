@@ -134,6 +134,11 @@ st.title("📊 SKBS Sales Report")
 DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 
+if not df_raw.empty:
+    st.subheader("🔍 데이터 로드 점검")
+    st.write(f"전체 데이터 행 개수: {len(df_raw)}개")
+    st.write("데이터 샘플 상위 5줄:", df_raw.head())
+
 if df_raw.empty:
     st.warning("데이터가 로드되지 않았습니다. 구글 드라이브 링크가 '링크가 있는 모든 사용자에게 공개'되어 있는지 확인해 주세요.")
     st.stop()
@@ -191,4 +196,5 @@ with st.sidebar:
 # --------------------------------------------------------------------------------
 # (사용자가 올린 기존 탭 로직 Tab 1 ~ Tab 5 그대로 유지)
 # ... [생략: 제공해주신 탭 코드를 그대로 하단에 붙여넣으시면 됩니다] ...
+
 
