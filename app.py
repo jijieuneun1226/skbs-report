@@ -206,8 +206,8 @@ with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("총 매출액 (년도)", f"{df_year_filtered['매출액'].sum():,.0f}백만원")
     c2.metric("총 구매처수 (년도)", f"{df_year_filtered['사업자번호'].nunique():,}처")
-    c3.metric("선택기간 매출액", f"{df_final['매출액'].sum():,.0f}백만원")
-    c4.metric("선택기간 구매처수", f"{df_final['사업자번호'].nunique():,}처")
+    c3.metric("분기 매출액", f"{df_final['매출액'].sum():,.0f}백만원")
+    c4.metric("분기 구매처수", f"{df_final['사업자번호'].nunique():,}처")
     st.markdown("---")
     col_a, col_b = st.columns([1, 1.5])
     with col_a:
@@ -225,9 +225,9 @@ with tab1:
 
 # --- [TAB 2] VIP & 이탈 관리 ---
 with tab2:
-    st.markdown("### 🏆 VIP 관리 및 거래처 분류 상세 분석")
+    st.markdown("### 🏆 매출 상위 거래처 분류 상세 분석")
     with st.expander("🥇 매출 상위 거래처 (VIP) Top 100", expanded=True):
-        st.markdown("**※ 이탈 위험군 기준:** 최근 구매일로부터 **90일(3개월)** 이상 경과 시 **'🚨 이탈위험'**, 그 미만은 **'✅ 정상'**.")
+        st.markdown("**※ 선택 기간내 매출 상위 거래처 리스트 <br> 이탈 위험군 기준:** 최근 구매일로부터 **90일(3개월)** 이상 경과 시 **'🚨 이탈위험'**, 그 미만은 **'✅ 정상'**.")
         if not df_final.empty:
             ranking = df_final.groupby(['사업자번호', '거래처명', '진료과']).agg({'매출액': 'sum', '수량': 'sum'}).reset_index()
             top100 = ranking.sort_values('매출액', ascending=False).head(100).copy()
@@ -304,7 +304,7 @@ with tab3:
 
 # --- [TAB 4] 지역 분석 ---
 with tab4:
-    st.markdown("### 🗺️ 지역별 실적 및 심층 내역")
+    st.markdown("### 🗺️ 지역별 현황")
     if '지역' in df_final.columns:
         reg_s = df_final.groupby('지역').agg({'매출액': 'sum', '사업자번호': 'nunique'}).reset_index().rename(columns={'사업자번호': '구매처수'}).sort_values('매출액', ascending=False)
         reg_s['마커크기'] = reg_s['매출액'].clip(lower=0)
@@ -331,7 +331,7 @@ with tab4:
 
 # --- [TAB 5] 제품 분석 ---
 with tab5:
-    st.markdown("### 📦 제품별 판매 현황 및 고객 상세 분석")
+    st.markdown("### 📦 제품별 판매 현황")
     p_main = df_final.groupby('제품명').agg({'수량': 'sum', '매출액': 'sum', '사업자번호': 'nunique'}).reset_index().rename(columns={'사업자번호': '구매처수'}).sort_values('매출액', ascending=False)
     ev_p = st.dataframe(p_main.style.format({'매출액': '{:,.1f}백만원', '수량': '{:,.0f}'}), use_container_width=True, on_select="rerun", selection_mode="single-row", height=300)
     
@@ -349,3 +349,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
