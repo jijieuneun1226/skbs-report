@@ -31,7 +31,7 @@ st.markdown("""
 @st.cache_data(ttl=3600) # 1시간 동안 데이터 유지
 def load_data_from_drive(file_id):
     # 구글 드라이브 직펌 링크 생성
-    url = f'https://drive.google.com/uc?id={1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr}'
+    url = f'https://drive.google.com/uc?id={'1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'}'
     
     try:
         # 대용량 엑셀 처리를 위해 engine='openpyxl' 명시
@@ -191,3 +191,4 @@ with st.sidebar:
 # --------------------------------------------------------------------------------
 # (사용자가 올린 기존 탭 로직 Tab 1 ~ Tab 5 그대로 유지)
 # ... [생략: 제공해주신 탭 코드를 그대로 하단에 붙여넣으시면 됩니다] ...
+
