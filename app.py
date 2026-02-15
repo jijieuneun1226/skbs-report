@@ -80,7 +80,7 @@ def load_data_from_drive(file_id):
         
         def classify_channel(group):
             online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
-            return '🌐 온라인' if group in online_list else ('🏢 오프라인' if group == 'SDP' else '기타')
+            return 'online'if group in online_list else ('offline' if group == 'SDP' else '기타')
         if '거래처그룹' in df.columns:
             df['판매채널'] = df['거래처그룹'].apply(classify_channel)
         str_cols = ['거래처그룹', '제품명', '제품군', '진료과', '지역']
@@ -318,3 +318,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
