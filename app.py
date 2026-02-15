@@ -161,7 +161,7 @@ if is_edit_mode:
         
         st.markdown("---")
         if st.button("🔗 뷰어용 공유 링크 생성"):
-            base_url = "https://skbs-report.streamlit.app/" 
+            base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
             c_encoded = [urllib.parse.quote(val) for val in sel_channels]
             p_string = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(c_encoded)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}"
             st.success("아래 링크를 복사하세요!")
@@ -318,4 +318,5 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
 
