@@ -2,12 +2,14 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import urllib.parse
 
 # --------------------------------------------------------------------------------
-# 1. 페이지 설정 및 URL 파라미터 읽기
+# 1. 페이지 설정 및 권한 제어
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
+# 현재 URL의 파라미터 읽기
 query_params = st.query_params
 is_edit_mode = query_params.get("mode") == "edit"
 
@@ -110,30 +112,34 @@ def classify_customers(df, target_year):
         has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
         past_years = [y for y in cust_year.columns if y < target_year - 1]
         has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
+            
         if has_ty:
             if has_t1: status = "✅ 기존 (유지)"
             else: status = "🔄 재유입 (복귀)" if has_history else "🆕 신규 (New)"
         else:
             if has_t1: status = "📉 1년 이탈 (최근)"
+            elif has_t2: status = "📉 2년 연속 이탈"
+            elif has_t3: status = "📉 3년 연속 이탈"
             else: status = "💤 장기 이탈 (4년+)"
         classification[biz_no] = status
     base_info['상태'] = base_info.index.map(classification)
     return base_info
 
 # --------------------------------------------------------------------------------
-# 3. 사이드바 및 URL 파라미터 처리 (관리자 선택값이 뷰어에게 전달됨)
+# 3. 사이드바 및 URL 파라미터 처리 (공유 버튼 보완)
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# URL에서 설정값 불러오기 함수
-def get_p(key, default_val):
+# URL 파라미터 읽기 함수
+def get_p(key, default):
     res = query_params.get_all(key)
-    if not res: return default_val
+    if not res: return default
     if key in ['y', 'q', 'm']: return [int(x) for x in res]
     return res
 
+# 현재 적용된 필터값들
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
@@ -142,26 +148,31 @@ sel_months = get_p('m', sorted(df_raw['월'].unique()))
 if is_edit_mode:
     with st.sidebar:
         st.header("⚙️ 관리자 필터 설정")
-        sel_channels = st.multiselect("0️⃣ 판매채널 선택", sorted(df_raw['판매채널'].unique()), default=sel_channels)
-        sel_years = st.multiselect("1️⃣ 년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=sel_years)
-        sel_quarters = st.multiselect("2️⃣ 분기 선택", sorted(df_raw['분기'].unique()), default=sel_quarters)
+        # 관리자 조작 위젯
+        sel_channels = st.multiselect("판매채널", sorted(df_raw['판매채널'].unique()), default=sel_channels)
+        sel_years = st.multiselect("년도", sorted(df_raw['년'].unique(), reverse=True), default=sel_years)
+        sel_quarters = st.multiselect("분기", sorted(df_raw['분기'].unique()), default=sel_quarters)
         
         q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         avail_m = []
         for q in sel_quarters: avail_m.extend(q_to_m[q])
-        sel_months = st.multiselect("3️⃣ 월 선택", sorted(avail_m), default=[m for m in sel_months if m in avail_m])
+        sel_months = st.multiselect("월", sorted(avail_m), default=[m for m in sel_months if m in avail_m])
         
-        sel_cats = st.multiselect("4️⃣ 제품군 선택", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
-        sel_products = st.multiselect("5️⃣ 제품명 선택", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
+        sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
+        sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
 
-        # 공유 링크 생성 버튼
+        # [보완] 공유 링크 생성 버튼
         st.markdown("---")
-        st.subheader("🔗 뷰어 공유 링크")
-        base_link = "https://skbs-report.streamlit.app/" 
-        final_params = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}"
-        share_url = (base_link + final_params).replace(" ", "+")
-        st.code(share_url, language="text")
-        st.caption("위 링크를 복사해 공유하세요. 뷰어는 이 필터가 고정된 화면을 봅니다.")
+        if st.button("🔗 뷰어용 공유 링크 생성"):
+            base_url = "https://skbs-report.streamlit.app/" 
+            # 한글 및 특수문자 인코딩 처리
+            c_encoded = [urllib.parse.quote(val) for val in sel_channels]
+            params = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(c_encoded)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}"
+            share_url = base_url + params
+            
+            st.success("아래 링크를 복사해서 공유하세요!")
+            st.code(share_url, language="text")
+            st.info("이 링크로 접속하면 사이드바가 보이지 않습니다.")
 else:
     sel_cats = sorted(df_raw['제품군'].unique())
     sel_products = sorted(df_raw['제품명'].unique())
@@ -177,7 +188,7 @@ df_final = df_year_filtered[
 ]
 
 # --------------------------------------------------------------------------------
-# 5. 메인 탭 구성 (요청하신 내용 그대로 복구)
+# 5. 메인 탭 구성 (요청하신 로직 100% 유지)
 # --------------------------------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. VIP & 이탈 관리", "🔄 3. 재유입 패턴 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
 
