@@ -34,112 +34,34 @@ st.title("📊 SKBS Sales Report")
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
-    # 구글 드라이브 직링크 포맷 (ZIP 에러 방지용)
+    # 구글 드라이브 직링크 포맷 (export=download를 붙여야 바이트 스트림으로 읽어올 수 있습니다)
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    
     try:
+        # requests를 사용하여 파일 콘텐츠를 가져옵니다.
         response = requests.get(url)
-        response.raise_for_status()
+        response.raise_for_status() # 접속 에러 발생 시 예외 처리
+        
+        # 가져온 데이터를 메모리상의 바이너리(BytesIO)로 변환하여 pandas로 읽습니다.
         file_bytes = io.BytesIO(response.content)
         df = pd.read_excel(file_bytes, engine='openpyxl')
+        
+        if df.empty:
+            st.error("불러온 데이터가 비어있습니다.")
+            return pd.DataFrame()
+            
     except Exception as e:
+        # 만약 여기서도 에러가 난다면, 공유 설정 문제일 확률이 매우 높습니다.
         st.error(f"데이터 로드 실패: {e}")
+        st.info("💡 팁: 드라이브 파일 오른쪽 클릭 -> '공유' -> '링크가 있는 모든 사용자'에게 '뷰어' 권한이 있는지 확인해 주세요.")
         return pd.DataFrame()
 
-    df.columns = df.columns.astype(str).str.strip()
-    col_map = {
-        '매출일자': ['매출일자', '날짜', 'Date', '일자'],
-        '제품명': ['제품명 변환', '제품명변환', '제품명', '품목명'],
-        '합계금액': ['합계금액', '매출액', '금액'],
-        '수량': ['수량', '판매수량'],
-        '사업자번호': ['사업자번호', '사업자등록번호'],
-        '거래처명': ['거래처명', '병원명'],
-        '진료과': ['진료과', '진료과목'],
-        '제품군': ['제품군', '카테고리'],
-        '거래처그룹': ['거래처그룹', '그룹'],
-        '주소': ['주소', 'Address', '사업장주소'],
-        '지역': ['지역']
-    }
-    
-    current_cols = {c.replace(' ', ''): c for c in df.columns}
-    for std_col, candidates in col_map.items():
-        if std_col in df.columns: continue
-        for cand in candidates:
-            clean_cand = cand.replace(' ', '')
-            for clean_real, real in current_cols.items():
-                if clean_real == clean_cand:
-                    df.rename(columns={real: std_col}, inplace=True)
-                    break
-            if std_col in df.columns: break
+# 파일 ID 적용 (사용자님이 주신 ID)
+DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
+df_raw = load_data_from_drive(DRIVE_FILE_ID)
 
-    try:
-        if '지역' not in df.columns and '주소' in df.columns:
-            df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
-            addr_map = {
-                '서울': '서울', '서울시': '서울', '서울특별시': '서울',
-                '경기': '경기', '경기도': '경기', '부산': '부산', '부산광역시': '부산',
-                '대구': '대구', '대구광역시': '대구', '인천': '인천', '인천광역시': '인천',
-                '광주': '광주', '광주광역시': '광주', '대전': '대전', '대전광역시': '대전',
-                '울산': '울산', '울산광역시': '울산', '세종': '세종', '세종특별자치시': '세종',
-                '강원': '강원', '강원도': '강원', '충북': '충북', '충청북도': '충북',
-                '충남': '충남', '충청남도': '충남', '전북': '전북', '전라북도': '전북',
-                '전남': '전남', '전라남도': '전남', '경북': '경북', '경상북도': '경북',
-                '경남': '경남', '경상남도': '경남', '제주': '제주', '제주도': '제주'
-            }
-            df['지역'] = df['지역_임시'].map(addr_map).fillna('기타')
-        elif '지역' not in df.columns:
-             df['지역'] = '미분류'
-
-        df['매출일자'] = pd.to_datetime(df['매출일자'])
-        df = df.sort_values('매출일자')
-        df['년'] = df['매출일자'].dt.year
-        df['분기'] = df['매출일자'].dt.quarter
-        df['월'] = df['매출일자'].dt.month
-        df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
-        
-        if '제품명' in df.columns:
-            df['제품명'] = df['제품명'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
-        
-        for col in ['합계금액', '수량']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        df['매출액'] = df['합계금액'] / 1000000
-        
-        def classify_channel(group):
-            online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
-            return 'online' if group in online_list else ('offline' if group == 'SDP' else '기타')
-        if '거래처그룹' in df.columns:
-            df['판매채널'] = df['거래처그룹'].apply(classify_channel)
-             
-    except Exception as e:
-        st.error(f"전처리 오류: {e}")
-        return pd.DataFrame()
-    return df
-
-@st.cache_data
-def classify_customers(df, target_year):
-    cust_year = df.groupby(['사업자번호', '년']).size().unstack(fill_value=0)
-    base_info = df.sort_values('매출일자').groupby('사업자번호').agg({
-        '거래처명': 'last', '진료과': 'last', '지역': 'last', '매출일자': 'max'
-    }).rename(columns={'매출일자': '최근구매일'})
-    sales_ty = df[df['년'] == target_year].groupby('사업자번호')['매출액'].sum()
-    base_info['해당년도_매출'] = base_info.index.map(sales_ty).fillna(0)
-    
-    classification = {}
-    for biz_no in base_info.index:
-        has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz_no, target_year] > 0)
-        has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
-        past_years = [y for y in cust_year.columns if y < target_year - 1]
-        has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
-        
-        if has_ty:
-            if has_t1: status = "✅ 기존 (유지)"
-            else: status = "🔄 재유입 (복귀)" if has_history else "🆕 신규 (New)"
-        else:
-            status = "📉 이탈 관리"
-        classification[biz_no] = status
-    base_info['상태'] = base_info.index.map(classification)
-    return base_info
-
+if df_raw.empty:
+    st.stop() # 데이터 없으면 실행 중단
 # --------------------------------------------------------------------------------
 # 시각화 함수 정의 (기존 함수들 그대로 유지)
 # --------------------------------------------------------------------------------
@@ -236,3 +158,4 @@ with tab4:
 
 with tab5:
     render_product_strategy(df_final)
+
