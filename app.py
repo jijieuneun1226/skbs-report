@@ -62,6 +62,28 @@ df_raw = load_data_from_drive(DRIVE_FILE_ID)
 
 if df_raw.empty:
     st.stop() # 데이터 없으면 실행 중단
+    # 기존 전처리 로직 중 에러가 자주 나는 부분을 이렇게 수정하세요
+try:
+    # 1. 날짜 변환 (열이 있을 때만 실행)
+    if '매출일자' in df.columns:
+        df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce')
+        df = df.dropna(subset=['매출일자']) # 날짜 없는 행 제거
+        # ... 년, 월, 분기 계산 로직 ...
+    else:
+        st.error("⚠️ '매출일자' 열을 찾을 수 없습니다. 엑셀 파일을 확인해주세요.")
+
+    # 2. 숫자 변환 (열이 없으면 0으로 채우기)
+    for col in ['합계금액', '수량']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[col] = 0 # 열이 없으면 에러 내지 말고 0으로 생성
+            
+    # 3. 매출액 계산
+    df['매출액'] = df['합계금액'] / 1000000
+
+except Exception as e:
+    st.warning(f"일부 데이터를 처리하는 중 주의사항이 발생했습니다: {e}")
 # --------------------------------------------------------------------------------
 # 시각화 함수 정의 (기존 함수들 그대로 유지)
 # --------------------------------------------------------------------------------
@@ -158,4 +180,5 @@ with tab4:
 
 with tab5:
     render_product_strategy(df_final)
+
 
