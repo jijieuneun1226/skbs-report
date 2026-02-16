@@ -4,8 +4,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import urllib.parse
 import numpy as np
-import requests # 👈 [추가] 파일을 강제로 가져오기 위해 필요
-import io       # 👈 [추가] 메모리에서 파일 열기 위해 필요
+import requests # 👈 파일을 강제로 가져오기 위한 핵심 라이브러리
+import io       # 👈 메모리에서 파일을 열기 위한 도구
 
 # --------------------------------------------------------------------------------
 # 1. 페이지 설정 및 권한 제어
@@ -29,68 +29,71 @@ st.markdown("""
 st.title("📊 SKBS Sales Report")
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 (강력한 requests 방식 적용)
+# 2. 데이터 로드 (바이러스 경고 무시 & 강제 다운로드 기능 탑재)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
-    # 구글 드라이브 다운로드 URL
+    # 1. 일반 다운로드 링크
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     
     try:
-        # 1. requests로 파일 내용 먼저 가져오기 (헤더 확인용)
-        response = requests.get(url)
+        # requests로 파일 요청 (세션 사용으로 쿠키 유지)
+        session = requests.Session()
+        response = session.get(url, stream=True)
         
-        # 2. 만약 다운로드 링크가 깨졌거나 권한이 없으면 HTML 페이지가 옴
+        # 2. '바이러스 검사 경고' 등으로 인해 바로 다운로드가 안 될 경우 처리
+        # (구글은 큰 파일의 경우 확인 토큰을 요구함)
+        token = None
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                token = value
+                break
+        
+        if token:
+            # 경고 무시하고 다시 요청
+            url = f"https://drive.google.com/uc?export=download&confirm={token}&id={file_id}"
+            response = session.get(url, stream=True)
+            
+        # 3. 상태 코드 확인
         if response.status_code != 200:
             st.error(f"❌ 구글 드라이브 연결 실패 (Status Code: {response.status_code})")
             return pd.DataFrame()
-            
-        # 3. 내용물이 HTML인지 확인 (권한 문제나 ID 오류면 HTML이 옴)
-        content_type = response.headers.get('Content-Type', '')
-        if 'text/html' in content_type:
-            st.error("❌ 엑셀 파일 대신 '웹페이지(HTML)'가 다운로드되었습니다.")
-            st.warning("💡 **해결 방법:**")
-            st.warning("1. 구글 드라이브 **파일 ID**가 바뀌었는지 확인하세요. (새로 업로드하면 ID가 바뀝니다!)")
-            st.warning("2. 구글 드라이브 공유 설정이 **'링크가 있는 모든 사용자'** 인지 확인하세요.")
-            st.stop() # 더 이상 진행 안 함
 
-        # 4. 메모리 상의 바이너리 데이터를 엑셀로 변환
-        file_stream = io.BytesIO(response.content)
-        
+        # 4. 엑셀 파일로 변환 (메모리에 있는 내용을 바로 읽음)
         try:
-            df = pd.read_excel(file_stream, engine='openpyxl')
+            df = pd.read_excel(io.BytesIO(response.content), engine='openpyxl')
         except:
-            # 엑셀 엔진 문제일 수 있으니 CSV로도 한번 시도
-            file_stream.seek(0)
+            # 혹시 구글 시트 포맷이면 csv로 올 수도 있으므로 대비
             try:
-                df = pd.read_csv(file_stream)
+                df = pd.read_csv(io.BytesIO(response.content))
             except:
-                st.error("❌ 파일은 다운로드했으나 엑셀 형식이 아닙니다.")
+                st.error("❌ 파일은 가져왔으나 엑셀 형식이 아닙니다. (HTML 페이지일 가능성 높음)")
                 return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"❌ 데이터 로드 중 치명적 오류: {e}")
+        st.error(f"❌ 데이터 로드 중 오류: {e}")
         return pd.DataFrame()
 
     # ------------------------------------------------------
-    # 전처리 시작 (컬럼명 정리)
+    # 전처리 시작 (이미지 기반 컬럼명 완벽 대응)
     # ------------------------------------------------------
     df.columns = df.columns.astype(str).str.strip()
     
     col_map = {
         '매출일자': ['매출일자', '날짜', 'Date', '일자'],
-        '제품명': ['제품명 변환', '제 품 명', '제품명', '품목명'],
+        '제품명': ['제품명 변환', '제 품 명', '제품명', '품목명'], # '제품명 변환'이 1순위
         '합계금액': ['합계금액', '공급가액', '금액', '매출액'],
-        '수량': ['수 량', '수량', 'Qty'],
+        '수량': ['수 량', '수량', 'Qty'], # [중요] 띄어쓰기 있는 '수 량' 대응
         '사업자번호': ['사업자번호', '사업자등록번호', 'Biz No'],
         '거래처명': ['거래처명', '병원명', '요양기관명'],
         '진료과': ['진료과', '진료과목'],
         '제품군': ['제품군', '카테고리'],
         '거래처그룹': ['거래처그룹', '그룹', '판매채널'],
-        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'],
+        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'], # [중요] '도로명주소' 대응
         '지역': ['지역', '시도']
     }
     
+    # 컬럼 찾기 (공백 무시하고 매핑)
     current_cols = {c.replace(' ', ''): c for c in df.columns}
     for std_col, candidates in col_map.items():
         if std_col in df.columns: continue
@@ -103,9 +106,11 @@ def load_data_from_drive(file_id):
             if std_col in df.columns: break
 
     try:
-        # [주소 -> 지역 변환]
+        # (1) '도로명주소' -> '지역' 자동 생성
         if '지역' not in df.columns and '주소' in df.columns:
+            # "충청남도 아산시..." -> "충청남도"만 추출
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
+            
             addr_map = {
                 '서울': '서울', '서울시': '서울', '서울특별시': '서울',
                 '경기': '경기', '경기도': '경기',
@@ -130,7 +135,7 @@ def load_data_from_drive(file_id):
         elif '지역' not in df.columns:
              df['지역'] = '미분류'
 
-        # [날짜 변환]
+        # (2) 날짜 변환 (방탄 처리)
         if '매출일자' in df.columns:
             df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce') 
             df = df.dropna(subset=['매출일자'])
@@ -140,7 +145,7 @@ def load_data_from_drive(file_id):
             df['월'] = df['매출일자'].dt.month
             df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
         else:
-            # 날짜 없으면 임시 날짜 생성 (앱 꺼짐 방지)
+            # 날짜 없으면 임시 날짜 (앱 꺼짐 방지)
             st.warning("⚠️ '매출일자' 컬럼이 없어 임시 날짜(2024-01-01)를 사용합니다.")
             df['매출일자'] = pd.to_datetime('2024-01-01')
             df['년'] = 2024
@@ -148,16 +153,19 @@ def load_data_from_drive(file_id):
             df['월'] = 1
             df['년월'] = '2024-01'
         
+        # (3) 괄호 제거
         if '제품명' in df.columns:
             df['제품명'] = df['제품명'].astype(str).str.replace(r'\(.*?\)', '', regex=True).str.strip()
         else: df['제품명'] = '미분류'
             
+        # (4) 숫자 변환
         for col in ['합계금액', '수량']:
             if col not in df.columns: df[col] = 0
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-        df['매출액'] = df['합계금액'] / 1000000
+        df['매출액'] = df['합계금액'] / 1000000 # 백만 원 단위
         
+        # (5) 채널 분류
         def classify_channel(group):
             online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
             return 'online'if group in online_list else ('offline' if group == 'SDP' else '기타')
@@ -166,6 +174,7 @@ def load_data_from_drive(file_id):
             df['판매채널'] = df['거래처그룹'].apply(classify_channel)
         else: df['판매채널'] = '기타'
         
+        # 기타 문자열 빈값 처리
         str_cols = ['거래처명', '거래처그룹', '제품군', '진료과', '지역']
         for col in str_cols:
             if col not in df.columns: df[col] = '미분류'
@@ -321,7 +330,7 @@ def render_winback_quality(df, current_year):
     df_wb = pd.DataFrame({'올해': curr[winback], '과거최고': hist[winback]})
     df_wb['회복률'] = (df_wb['올해'] / df_wb['과거최고'] * 100).fillna(0)
     df_wb['상태'] = df_wb['회복률'].apply(lambda x: "🟢 완전" if x>=80 else ("🔴 간보기" if x<20 else "🟡 회복중"))
-    df_wb = df_wb.reset_index().rename(columns={'index':'거래처명'}) # 거래처명을 컬럼으로
+    df_wb = df_wb.reset_index().rename(columns={'index':'거래처명'}) 
 
     st.markdown(f"### ♻️ {current_year}년 재유입 분석")
     c1, c2 = st.columns(2)
@@ -356,7 +365,7 @@ def render_product_strategy(df):
 try:
     DRIVE_FILE_ID = st.secrets["DRIVE_FILE_ID"]
 except:
-    # 👇 [중요] 여기에 새 파일 ID를 넣어야 합니다!
+    # 👇 새 파일 ID를 여기에 넣으세요!
     DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr" 
 
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
@@ -379,7 +388,6 @@ if is_edit_mode:
         sel_channels = st.multiselect("채널", sorted(df_raw['판매채널'].unique()), default=sel_channels)
         sel_years = st.multiselect("년도", sorted(df_raw['년'].unique(), reverse=True), default=sel_years)
         sel_quarters = st.multiselect("분기", sorted(df_raw['분기'].unique()), default=sel_quarters)
-        # 월 필터 로직 생략 (간소화)
         st.markdown("---")
         if st.button("🔗 링크 생성"):
             base = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/"
@@ -420,7 +428,14 @@ with tab2:
     render_advanced_insights(df_final, "거래처 분석")
     st.markdown("### 🏆 VIP 리스트")
     if not df_final.empty:
-        vip = df_final.groupby(['거래처명','진료과']).agg({'매출액':'sum'}).reset_index().sort_values('매출액', ascending=False).head(50)
+        # 가독성을 위해 applymap을 괄호로 감싸서 들여쓰기 에러 방지
+        vip = (
+            df_final.groupby(['거래처명','진료과'])
+            .agg({'매출액':'sum'})
+            .reset_index()
+            .sort_values('매출액', ascending=False)
+            .head(50)
+        )
         st.dataframe(vip.style.format({'매출액':'{:,.1f}M'}), use_container_width=True)
         
     st.markdown("---")
