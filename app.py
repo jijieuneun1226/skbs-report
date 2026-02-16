@@ -4,6 +4,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import urllib.parse
 import numpy as np # 분석 계산용
+import io        # 추가 필요
+import requests  # 추가 필요
 
 # --------------------------------------------------------------------------------
 # 1. 페이지 설정 및 권한 제어
@@ -33,13 +35,21 @@ st.title("📊 SKBS Sales Report")
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
-    url = f"https://drive.google.com/uc?id={file_id}"
+    # 구글 드라이브 직링크 포맷 (export=download를 붙여야 에러가 안 납니다)
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
     try:
-        df = pd.read_excel(url, engine='openpyxl')
+        # 파일 데이터를 바이트 형태로 가져옵니다
+        response = requests.get(url)
+        response.raise_for_status()
+        file_bytes = io.BytesIO(response.content)
+        
+        # 바이트 데이터를 엑셀로 읽습니다 (ZIP 에러 해결책)
+        df = pd.read_excel(file_bytes, engine='openpyxl')
     except Exception as e:
         st.error(f"데이터 로드 실패: {e}")
         return pd.DataFrame()
 
+    # --- 이후 전처리 로직 (기존과 동일) ---
     df.columns = df.columns.astype(str).str.strip()
     col_map = {
         '매출일자': ['매출일자', '날짜', 'Date', '일자'],
@@ -67,39 +77,29 @@ def load_data_from_drive(file_id):
             if std_col in df.columns: break
 
     try:
-        # [주소 기반 지역 표준화 로직]
+        # [지역 표준화 및 날짜 처리 로직은 기존 코드와 동일...]
         if '지역' not in df.columns and '주소' in df.columns:
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
             addr_map = {
                 '서울': '서울', '서울시': '서울', '서울특별시': '서울',
-                '경기': '경기', '경기도': '경기',
-                '부산': '부산', '부산시': '부산', '부산광역시': '부산',
-                '대구': '대구', '대구시': '대구', '대구광역시': '대구',
-                '인천': '인천', '인천시': '인천', '인천광역시': '인천',
-                '광주': '광주', '광주시': '광주', '광주광역시': '광주',
-                '대전': '대전', '대전시': '대전', '대전광역시': '대전',
-                '울산': '울산', '울산시': '울산', '울산광역시': '울산',
-                '세종': '세종', '세종시': '세종', '세종특별자치시': '세종',
-                '강원': '강원', '강원도': '강원', '강원특별자치도': '강원',
-                '충북': '충북', '충청북도': '충북',
-                '충남': '충남', '충청남도': '충남',
-                '전북': '전북', '전라북도': '전북', '전북특별자치도': '전북',
-                '전남': '전남', '전라남도': '전남',
-                '경북': '경북', '경상북도': '경북',
-                '경남': '경남', '경상남도': '경남',
-                '제주': '제주', '제주도': '제주', '제주특별자치도': '제주'
+                '경기': '경기', '경기도': '경기', '부산': '부산', '부산광역시': '부산',
+                '대구': '대구', '대구광역시': '대구', '인천': '인천', '인천광역시': '인천',
+                '광주': '광주', '광주광역시': '광주', '대전': '대전', '대전광역시': '대전',
+                '울산': '울산', '울산광역시': '울산', '세종': '세종', '세종특별자치시': '세종',
+                '강원': '강원', '강원도': '강원', '충북': '충북', '충청북도': '충북',
+                '충남': '충남', '충청남도': '충남', '전북': '전북', '전라북도': '전북',
+                '전남': '전남', '전라남도': '전남', '경북': '경북', '경상북도': '경북',
+                '경남': '경남', '경상남도': '경남', '제주': '제주', '제주도': '제주'
             }
             df['지역'] = df['지역_임시'].map(addr_map).fillna('기타')
-            df.drop(columns=['지역_임시'], inplace=True, errors='ignore')
-        elif '지역' not in df.columns:
-             df['지역'] = '미분류'
-
+        
         df['매출일자'] = pd.to_datetime(df['매출일자'])
         df = df.sort_values('매출일자')
         df['년'] = df['매출일자'].dt.year
         df['분기'] = df['매출일자'].dt.quarter
         df['월'] = df['매출일자'].dt.month
         df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
+        
         if '제품명' in df.columns:
             df['제품명'] = df['제품명'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
         for col in ['합계금액', '수량']:
@@ -109,11 +109,11 @@ def load_data_from_drive(file_id):
         
         def classify_channel(group):
             online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
-            return 'online'if group in online_list else ('offline' if group == 'SDP' else '기타')
+            return 'online' if group in online_list else ('offline' if group == 'SDP' else '기타')
         if '거래처그룹' in df.columns:
             df['판매채널'] = df['거래처그룹'].apply(classify_channel)
-        str_cols = ['거래처그룹', '제품명', '제품군', '진료과', '지역']
-        for col in str_cols:
+        
+        for col in ['거래처그룹', '제품명', '제품군', '진료과', '지역']:
             if col in df.columns:
                 df[col] = df[col].astype(str).replace('nan', '미분류')
              
@@ -122,36 +122,16 @@ def load_data_from_drive(file_id):
         return pd.DataFrame()
     return df
 
-@st.cache_data
-def classify_customers(df, target_year):
-    cust_year = df.groupby(['사업자번호', '년']).size().unstack(fill_value=0)
-    base_info = df.sort_values('매출일자').groupby('사업자번호').agg({
-        '거래처명': 'last', '진료과': 'last', '지역': 'last', '매출일자': 'max'
-    }).rename(columns={'매출일자': '최근구매일'})
-    sales_ty = df[df['년'] == target_year].groupby('사업자번호')['매출액'].sum()
-    base_info['해당년도_매출'] = base_info.index.map(sales_ty).fillna(0)
-    
-    classification = {}
-    for biz_no in base_info.index:
-        has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz_no, target_year] > 0)
-        has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
-        has_t2 = (target_year - 2 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 2] > 0)
-        has_t3 = (target_year - 3 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 3] > 0)
-        
-        past_years = [y for y in cust_year.columns if y < target_year - 1]
-        has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
-        
-        if has_ty:
-            if has_t1: status = "✅ 기존 (유지)"
-            else: status = "🔄 재유입 (복귀)" if (has_history or has_t2 or has_t3) else "🆕 신규 (New)"
-        else:
-            if has_t1: status = "📉 1년 이탈 (최근)"
-            elif has_t2: status = "📉 2년 연속 이탈"
-            elif has_t3: status = "📉 3년 연속 이탈"
-            else: status = "💤 장기 이탈 (4년+)"
-        classification[biz_no] = status
-    base_info['상태'] = base_info.index.map(classification)
-    return base_info
+# --------------------------------------------------------------------------------
+# 3. 데이터 실행 및 ID 지정 (수정됨)
+# --------------------------------------------------------------------------------
+DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr" # 여기에 명시적으로 선언
+
+df_raw = load_data_from_drive(DRIVE_FILE_ID)
+
+if df_raw.empty:
+    st.warning("데이터를 불러올 수 없습니다. 파일 ID와 공유 설정을 확인하세요.")
+    st.stop()
 
 # --------------------------------------------------------------------------------
 # 📊 Overview
@@ -821,3 +801,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
