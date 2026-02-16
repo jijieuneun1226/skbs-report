@@ -29,7 +29,7 @@ st.markdown("""
 st.title("📊 SKBS Sales Report")
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 및 전처리
+# 2. 데이터 로드 및 전처리 (이미지 맞춤형 + 방탄 로직)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
@@ -37,27 +37,32 @@ def load_data_from_drive(file_id):
     try:
         df = pd.read_excel(url, engine='openpyxl')
     except Exception as e:
-        st.error(f"데이터 로드 실패: {e}")
+        st.error(f"❌ 엑셀 파일 로드 실패: {e}")
         return pd.DataFrame()
 
+    # 1. 컬럼명 앞뒤 공백 제거
     df.columns = df.columns.astype(str).str.strip()
+    
+    # 2. [이미지 분석 기반] 컬럼 매핑 설정
+    # 왼쪽(표준이름) : 오른쪽(엑셀에 적혀있는 실제 이름 후보들)
     col_map = {
         '매출일자': ['매출일자', '날짜', 'Date', '일자'],
-        '제품명': ['제품명 변환', '제품명변환', '제품명', '품목명'],
-        '합계금액': ['합계금액', '매출액', '금액'],
-        '수량': ['수량', '판매수량'],
-        '사업자번호': ['사업자번호', '사업자등록번호'],
-        '거래처명': ['거래처명', '병원명'],
+        '제품명': ['제품명 변환', '제 품 명', '제품명', '품목명'], # '제품명 변환' 1순위
+        '합계금액': ['합계금액', '공급가액', '금액', '매출액'],
+        '수량': ['수 량', '수량', 'Qty'], # '수 량' (띄어쓰기) 대응
+        '사업자번호': ['사업자번호', '사업자등록번호', 'Biz No'],
+        '거래처명': ['거래처명', '병원명', '요양기관명'],
         '진료과': ['진료과', '진료과목'],
         '제품군': ['제품군', '카테고리'],
-        '거래처그룹': ['거래처그룹', '그룹'],
-        '주소': ['주소', 'Address', '사업장주소'],
-        '지역': ['지역']
+        '거래처그룹': ['거래처그룹', '그룹', '판매채널'],
+        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'], # '도로명주소' 대응
+        '지역': ['지역', '시도']
     }
     
-    current_cols = {c.replace(' ', ''): c for c in df.columns}
+    # 매핑 로직 (이름 바꾸기)
+    current_cols = {c.replace(' ', ''): c for c in df.columns} # 띄어쓰기 무시하고 찾기 위해
     for std_col, candidates in col_map.items():
-        if std_col in df.columns: continue
+        if std_col in df.columns: continue # 이미 표준 이름으로 되어있으면 패스
         for cand in candidates:
             clean_cand = cand.replace(' ', '')
             for clean_real, real in current_cols.items():
@@ -67,9 +72,12 @@ def load_data_from_drive(file_id):
             if std_col in df.columns: break
 
     try:
-        # [주소 기반 지역 표준화 로직]
+        # (1) '도로명주소'를 이용해서 '지역' 컬럼 자동 생성
         if '지역' not in df.columns and '주소' in df.columns:
+            # 주소의 첫 번째 단어 추출 (예: "충청남도 아산시..." -> "충청남도")
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
+            
+            # 지저분한 지역명 통일 (매핑)
             addr_map = {
                 '서울': '서울', '서울시': '서울', '서울특별시': '서울',
                 '경기': '경기', '경기도': '경기',
@@ -91,35 +99,61 @@ def load_data_from_drive(file_id):
             }
             df['지역'] = df['지역_임시'].map(addr_map).fillna('기타')
             df.drop(columns=['지역_임시'], inplace=True, errors='ignore')
+        
         elif '지역' not in df.columns:
              df['지역'] = '미분류'
 
-        df['매출일자'] = pd.to_datetime(df['매출일자'])
-        df = df.sort_values('매출일자')
-        df['년'] = df['매출일자'].dt.year
-        df['분기'] = df['매출일자'].dt.quarter
-        df['월'] = df['매출일자'].dt.month
-        df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
-        if '제품명' in df.columns:
-            df['제품명'] = df['제품명'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
-        for col in ['합계금액', '수량']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        df['매출액'] = df['합계금액'] / 1000000
+        # (2) 날짜 변환
+        if '매출일자' in df.columns:
+            df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce') 
+            df = df.dropna(subset=['매출일자']) # 날짜 없는 행 삭제
+            df = df.sort_values('매출일자')
+            
+            df['년'] = df['매출일자'].dt.year
+            df['분기'] = df['매출일자'].dt.quarter
+            df['월'] = df['매출일자'].dt.month
+            df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
+        else:
+            st.error("🚨 '매출일자' 컬럼을 찾을 수 없습니다. 분석이 불가능합니다.")
+            return pd.DataFrame()
         
+        # (3) 제품명 정리
+        if '제품명' in df.columns:
+            df['제품명'] = df['제품명'].astype(str).str.replace(r'\(.*?\)', '', regex=True).str.strip()
+        else:
+            df['제품명'] = '미분류'
+            
+        # (4) 숫자 변환 (없으면 0으로 채움)
+        for col in ['합계금액', '수량']:
+            if col not in df.columns: df[col] = 0
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+        df['매출액'] = df['합계금액'] / 1000000 # 백만 원 단위
+        
+        # (5) 채널 분류
         def classify_channel(group):
             online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
             return 'online'if group in online_list else ('offline' if group == 'SDP' else '기타')
+            
         if '거래처그룹' in df.columns:
             df['판매채널'] = df['거래처그룹'].apply(classify_channel)
-        str_cols = ['거래처그룹', '제품명', '제품군', '진료과', '지역']
+        else:
+            df['판매채널'] = '기타'
+        
+        # 문자열 컬럼 빈값 처리
+        str_cols = ['거래처명', '거래처그룹', '제품군', '진료과', '지역']
         for col in str_cols:
-            if col in df.columns:
-                df[col] = df[col].astype(str).replace('nan', '미분류')
+            if col not in df.columns: df[col] = '미분류'
+            df[col] = df[col].astype(str).replace('nan', '미분류')
+            
+        # 사업자번호 없으면 거래처명으로 대체
+        if '사업자번호' not in df.columns:
+             df['사업자번호'] = df['거래처명']
              
     except Exception as e:
-        st.error(f"전처리 오류: {e}")
+        st.error(f"❌ 데이터 전처리 중 오류 발생: {e}")
         return pd.DataFrame()
+        
     return df
 
 @st.cache_data
@@ -704,7 +738,6 @@ with tab2:
             top100['최근구매일'] = top100['사업자번호'].map(last_p)
             top100['상태'] = top100['최근구매일'].apply(lambda x: '🚨 이탈위험' if (cur_date - x).days >= 90 else '✅ 정상')
             
-            # [Fix] 가독성 및 들여쓰기 에러 방지를 위한 괄호 처리
             styled_vip = (
                 top100[['상태', '거래처명', '진료과', '매출액', '수량', '객단가']]
                 .style.format({'매출액': '{:,.1f}백만원', '객단가': '{:,.0f}원'})
