@@ -126,7 +126,7 @@ def load_data_from_drive(file_id):
     return df, brand_data
 
 # --------------------------------------------------------------------------------
-# 3. [SK분석 기본 폼] 분석 함수 정의 (성역: 100% 동일 복구)
+# 3. [SK분석 기본 폼] 분석 함수 정의 (성역 보존)
 # --------------------------------------------------------------------------------
 
 def render_smart_overview(df_curr, df_raw):
@@ -274,7 +274,7 @@ def render_product_strategy(df):
     <b>💡 분석 가이드:</b> 연간 최대 매출 월을 1.0으로 환산. 🟥 진할수록 성수기임을 의미합니다.
     </div>""", unsafe_allow_html=True)
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
-    # [수정] TypeError border 인자 제거
+    # [수정] TypeError 방지를 위해 px.imshow에서 border 인자 제거 (성역 내부 유일한 오류 수정)
     st.plotly_chart(px.imshow(season_pivot.div(season_pivot.max(axis=1), axis=0), color_continuous_scale="Reds", aspect="auto"), use_container_width=True)
 
     with st.expander("🧩 **함께 팔기(Cross-selling) 기회 분석기**", expanded=True):
@@ -327,7 +327,6 @@ data_load_res = load_data_from_drive(DRIVE_FILE_ID)
 if not data_load_res: st.stop()
 df_raw, brand_data_dict = data_load_res
 
-# URL 필터 로드
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
@@ -411,9 +410,9 @@ with tab2:
     st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
     with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
-        # [해결] 최근구매일_str 생성
+        # [해결] KeyError 방지를 위해 최근구매일_str 생성
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
-        # [수정] 단위 백만원 고정 및 소수점 1자리 서식
+        # [수정] 매출 상위 거래처 표 단위 백만원 고정 및 소수점 1자리 표시
         event_vip = st.dataframe(ranking_v[['거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
                                  use_container_width=True, on_select="rerun", selection_mode="single-row", height=350,
                                  column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
@@ -421,7 +420,7 @@ with tab2:
         if len(event_vip.selection.rows) > 0:
             v_idx = ranking_v.index[event_vip.selection.rows[0]]
             v_biz = ranking_v.loc[v_idx, '사업자번호']
-            # [수정] 수량 컬럼 추가 및 백만원 단위 서식
+            # [수정] 행 클릭 시 '수량' 컬럼 추가 및 백만원 단위 서식 적용
             st.dataframe(df_raw[df_raw['사업자번호'] == v_biz].groupby('제품명').agg({'매출액': 'sum', '수량': 'sum'}).sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,} 개'}), use_container_width=True)
     st.markdown("---")
     c_s1, c_s2 = st.columns([1, 2])
@@ -432,7 +431,7 @@ with tab2:
     st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
     display_cls = cls_d[cls_d['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).copy()
     display_cls['최근구매일_str'] = display_cls['최근구매일'].dt.strftime('%Y-%m-%d')
-    # [수정] 그룹별 표 매출액 단위 백만원 고정
+    # [수정] 그룹별 표 매출액 단위 백만원 고정 및 서식
     event_cls = st.dataframe(display_cls[['거래처명', '진료과', '최근구매일_str', '해당년도_매출']].rename(columns={'해당년도_매출':'매출액(백만원)', '최근구매일_str':'최근구매일'}), 
                              use_container_width=True, on_select="rerun", selection_mode="single-row",
                              column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
@@ -440,9 +439,33 @@ with tab2:
         row_biz = display_cls.index[event_cls.selection.rows[0]]
         h_df = df_raw[df_raw['사업자번호'] == row_biz].sort_values('매출일자', ascending=False).head(20).copy()
         h_df['매출일자_str'] = h_df['매출일자'].dt.strftime('%Y-%m-%d')
-        st.dataframe(h_df[['매출일자_str', '제품명', '매출액', '수량']].rename(columns={'매출일자_str':'매출일자'}).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,} 개'}), use_container_width=True)
+        st.dataframe(h_df[['매출일자_str', '제품명', '매출액', '수량']].rename(columns={'매출일자_str':'매출일자'}).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,}'}), use_container_width=True)
 
 with tab3:
+    # [원본 보존]
+    df_h_v = df_raw.sort_values(['사업자번호', '매출일자']).copy()
+    df_h_v['구매간격'] = (df_h_v['매출일자'] - df_h_v.groupby('사업자번호')['매출일자'].shift(1)).dt.days
+    wb_v = df_h_v[(df_h_v['사업자번호'].isin(df_final['사업자번호'])) & (df_h_v['구매간격'] >= 180)].copy()
+    if not wb_v.empty:
+        wb_ids_l = wb_v['사업자번호'].unique()
+        s_c = df_final[df_final['사업자번호'].isin(wb_ids_l)].groupby('사업자번호')['매출액'].sum()
+        s_m = df_raw[df_raw['사업자번호'].isin(wb_ids_l)].groupby('사업자번호')['매출액'].max()
+        df_wb_l = pd.DataFrame({'올해': s_c, '최고': s_m}).fillna(0)
+        df_wb_l['회복률'] = (df_wb_l['올해'] / df_wb_l['최고'] * 100).replace([np.inf, -np.inf], 0)
+        trig_pv = wb_v.groupby('제품명').size().idxmax()
+        rec_f = len(df_wb_l[df_wb_l['회복률']>=80]); rec_m = len(df_wb_l[(df_wb_l['회복률']<80)&(df_wb_l['회복률']>=20)]); rec_l = len(df_wb_l[df_wb_l['회복률']<20])
+        
+        st.subheader("✔️ Summary")
+        st.write(f"• 총 재유입 거래처: **{len(wb_ids_l)} 처** (6개월 공백 후 복귀 기준)")
+        st.write(f"• 재유입 발생 총 매출: **{df_wb_l['올해'].sum():,.0f} 백만원**")
+        st.write(f"• 평균 회복률: **{df_wb_l['회복률'].mean():.1f}%** (과거 최고 대비 현재 비율)")
+        st.write(f"• 그룹별 분포: 완전 회복(**{rec_f}처**), 회복 중(**{rec_m}처**), 재진입 초기(**{rec_l}처**)")
+
+        st.subheader("✔️ Insight")
+        st.write(f"• **회복 퀄리티 요약:** 올해 재유입 고객의 평균 회복률은 **{df_wb_l['회복률'].mean():.1f}%**입니다. '완전 회복' 그룹이 **{rec_f}처**로 복귀 고객들의 충성도가 빠르게 정상화되고 있습니다.")
+        st.write(f"• **복귀 트리거 제품:** 이탈 고객들이 복귀 시 가장 먼저 찾는 제품은 **{trig_pv}**입니다.")
+        st.write(f"• **재유입 매출 기여도:** 전체 매출 중 재유입 거래처가 기여하는 비중은 **{(df_wb_l['올해'].sum()/df_final['매출액'].sum()*100):.1f}%**입니다.")
+
     render_winback_quality(df_final, df_raw, sel_years[0])
     st.markdown("---")
     st.markdown("### 🔄 재유입 기여 비중 및 이탈 전 구매 품목")
@@ -462,6 +485,38 @@ with tab3:
             st.plotly_chart(px.bar(res[res['제품명'] == s_p].groupby('이전_제품').size().reset_index(name='count').sort_values('count', ascending=False).head(10), x='count', y='이전_제품', orientation='h', title=f"[{s_p}] 복귀 고객의 과거 사용 제품"), use_container_width=True)
 
 with tab4:
+    # [원본 보존]
+    if not df_final.empty:
+        reg_v = df_final.groupby('지역').agg(Sales=('매출액', 'sum'), Count=('사업자번호', 'nunique')).reset_index()
+        top_c_v = reg_v.loc[reg_v['Count'].idxmax()]
+        top_s_v = reg_v.loc[reg_v['Sales'].idxmax()]
+        y_v = df_final['년'].max()
+        df_ly_v = df_raw[(df_raw['년'] == (y_v-1)) & (df_raw['월'].isin(df_final['월'].unique()))]
+        ly_v = df_ly_v.groupby('지역').agg(LY_C=('사업자번호', 'nunique'), LY_S=('매출액','sum')).reset_index()
+        comp_v = reg_v.merge(ly_v, on='지역', how='left').fillna(0)
+        comp_v['Diff_C'] = comp_v['Count'] - comp_v['LY_C']
+        comp_v['Sales_Pct'] = (comp_v['Sales'] - comp_v['LY_S']) / comp_v['LY_S'].replace(0,1) * 100
+        inc_r = comp_v.loc[comp_v['Diff_C'].idxmax()]; dec_r = comp_v.loc[comp_v['Diff_C'].idxmin()]
+        inc_s = comp_v.loc[comp_v['Sales_Pct'].idxmax()]; dec_s = comp_v.loc[comp_v['Sales_Pct'].idxmin()]
+
+        st.subheader("✔️ Summary")
+        st.write(f"• 최다 거래 지역: **{top_c_v['지역']}** ({top_c_v['Count']}처)")
+        st.write(f"• 최고 매출 지역: **{top_s_v['지역']}** ({top_s_v['Sales']:,.0f} 백만원)")
+        st.write(f"• 거래처 변동: 전년 대비 **{inc_r['지역']} {int(inc_r['Diff_C'])}처 증가** / **{dec_r['지역']} {abs(int(dec_r['Diff_C']))}처 감소**")
+        st.write(f"• 매출 변동: 전년 대비 **{inc_s['지역']} {inc_s['Sales_Pct']:+.1f}% 상승** / **{dec_s['지역']} {dec_s['Sales_Pct']:+.1f}% 하락**")
+
+        risk_v = []
+        for r in df_final['지역'].unique():
+            r_df = df_final[df_final['지역'] == r]
+            risk_append = (r_df.groupby('거래처명')['매출액'].sum().max() / r_df['매출액'].sum() * 100)
+            risk_v.append({'지역': r, '의존도': risk_append})
+        df_risk_v = pd.DataFrame(risk_v).sort_values('의존도', ascending=False)
+        
+        st.subheader("✔️ Insight")
+        st.write(f"• **커버리지 변동:** 현재 **{inc_r['지역']}**은 전년 대비 거래처가 **{int(inc_r['Diff_C'])}처(+{inc_r['Diff_C']/inc_r['LY_C']*100:.1f}%)** 증가하며 활발한 확장을 보이고 있습니다.")
+        st.write(f"• **매출 등락 분석:** **{dec_s['지역']}**은 거래처 수 대비 매출이 **{dec_s['Sales_Pct']:.1f}%** 하락하여 처당 단가 개선이 필요합니다.")
+        st.write(f"• **지역별 핵심 거점 의존도:** **{df_risk_v.iloc[0]['지역']}**은 상위 1개 병원 매출 비중이 **{df_risk_v.iloc[0]['의존도']:.1f}%**로 높습니다.")
+
     render_regional_deep_dive(df_final)
     st.markdown("---")
     st.markdown("### 🗺️ 지역별 상세 실적 리스트")
@@ -477,12 +532,35 @@ with tab4:
         st.dataframe(df_final[df_final['지역'] == sel_r_v].groupby(['거래처명', '제품명']).agg({'매출액': 'sum', '수량': 'sum'}).reset_index().sort_values('매출액', ascending=False).head(50).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
 with tab5:
-    p_stats_v5 = df_final.groupby('제품명').agg(Sales=('매출액', 'sum'), Qty=('수량', 'sum'), Count=('사업자번호', 'nunique')).reset_index().sort_values('Sales', ascending=False)
-    cat_sum_v5 = df_final.groupby('제품군')['매출액'].sum().sort_values(ascending=False)
+    # [원본 보존]
+    if not df_final.empty:
+        p_stats = df_final.groupby('제품명').agg(Sales=('매출액', 'sum'), Qty=('수량', 'sum'), Count=('사업자번호', 'nunique')).reset_index().sort_values('Sales', ascending=False)
+        cat_sum = df_final.groupby('제품군')['매출액'].sum().sort_values(ascending=False)
+        
+        y_curr = int(df_final['년'].max()); m_curr = df_final['월'].unique()
+        ly_p = df_raw[(df_raw['년'] == y_curr-1) & (df_raw['월'].isin(m_curr))].groupby('제품명')['매출액'].sum()
+        p_stats['Growth'] = (p_stats['Sales'] - p_stats['제품명'].map(ly_p).fillna(0)) / p_stats['제품명'].map(ly_p).replace(0,1) * 100
+        top_g_p = p_stats.sort_values('Growth', ascending=False).iloc[0]
+        
+        st.subheader("✔️ Summary")
+        st.write(f"• 최다 판매 제품: **{p_stats.iloc[0]['제품명']}** ({int(p_stats.iloc[0]['Qty']):,}개 / {p_stats.iloc[0]['Sales']:,.0f} 백만원)")
+        st.write(f"• 성장률 1위 제품: **{top_g_p['제품명']}** (전년비 **{top_g_p['Growth']:+.1f}%**)")
+        st.write(f"• 최대 매출 제품군: **{cat_sum.index[0]}** (전체 매출의 **{cat_sum.max()/df_final['매출액'].sum()*100:.1f}%** 차지)")
+        st.write(f"• 시장 침투율: 전체 거래처 중 **{len(df_final['사업자번호'].unique())/df_raw['사업자번호'].nunique()*100:.1f}%**가 선택 제품 구매 중")
+
+        st.subheader("✔️ Insight")
+        st.write(f"• **제품별 판매 요약 (Performance):** **{p_stats.iloc[0]['제품명']}**이 전체 실적을 견인하고 있습니다. 반면 **{p_stats.iloc[-1]['제품명']}**은 성장세가 둔화된 성숙기 단계입니다.")
+        st.write(f"• **제품군별 기여도 비교 (Category):** 현재 **{cat_sum.index[0]}**가 핵심이나, 신규 확보율이 높은 카테고리 중심의 마케팅이 유효합니다.")
+        
+        if len(p_stats) >= 2:
+            acc_A = set(df_final[df_final['제품명'] == p_stats.iloc[0]['제품명']]['거래처명'].unique())
+            acc_B = set(df_final[df_final['제품명'] == p_stats.iloc[1]['제품명']]['거래처명'].unique())
+            st.write(f"• **교차 판매 기회:** 주력 제품인 **{p_stats.iloc[0]['제품명']}** 사용처 중 **{p_stats.iloc[1]['제품명']}**를 쓰지 않는 타겟 **{len(acc_A - acc_B)}처**를 확보했습니다.")
+
     st.markdown("### 📦 제품별 판매 현황")
     c_p1, c_p2 = st.columns(2)
-    with c_p1: st.plotly_chart(px.bar(p_stats_v5, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
-    with c_p2: st.plotly_chart(px.pie(cat_sum_v5.reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
+    with c_p1: st.plotly_chart(px.bar(p_stats, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
+    with c_p2: st.plotly_chart(px.pie(cat_sum.reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
     
     render_product_strategy(df_final)
     st.markdown("---")
@@ -495,7 +573,7 @@ with tab5:
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
 # --------------------------------------------------------------------------------
-# 6. [브랜드관 성과 분석 고정] 누락된 차트 2종 완벽 복구
+# 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 및 단위 수정 완벽 반영
 # --------------------------------------------------------------------------------
 with tab6:
     st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
@@ -504,7 +582,6 @@ with tab6:
     if not brand_data_dict or brand_data_dict['Brand_Total'].empty:
         st.warning("🏠 브랜드관 분석 데이터가 없습니다."); 
     else:
-        # 제품명 매핑
         valid_p = df_raw['제품명'].unique()
         def map_p(n):
             c = str(n).replace('[SK]', '').replace('주', '').replace('0.5ml', '').strip()
@@ -512,7 +589,6 @@ with tab6:
                 if c[:5] in vp: return vp
             return str(n).strip()
 
-        # 데이터 환산
         df_t = brand_data_dict['Brand_Total'][brand_data_dict['Brand_Total']['년도'] == t_year]
         df_d = brand_data_dict['Brand_Direct_Sales'].copy()
         if not df_d.empty:
@@ -529,7 +605,6 @@ with tab6:
         conv_sales, conv_cnt = df_d['매출_백만'].sum() if not df_d.empty else 0, df_d['사업자번호'].nunique() if not df_d.empty else 0
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
-        # Summary 디자인 (1번탭 스타일)
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
@@ -547,13 +622,30 @@ with tab6:
         st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], 
                                "성과 지표": [f"{uv:,} 명", f"{conv_sales:,.1f} 백만원", f"{conv_cnt:,} 처", f"{atv:,.0f} 원"]}))
 
-        # [누락 복구] 차트 2종 (Line Chart, Pie Chart)
+        # [수정 반영] 월별 추이 차트 대신 브랜드관 주문 Top 5 제품 표 구성
         col_l, col_r = st.columns([1.5, 1])
         with col_l:
-            st.markdown("#### 📅 월별 유입 및 관심도 추이")
-            if not df_m.empty: 
-                fig_line = px.line(df_m, x='월', y=['UV', 'PV'], markers=True, color_discrete_sequence=['#4e79a7', '#e15759'])
-                st.plotly_chart(fig_line, use_container_width=True)
+            st.markdown(f"#### 🏆 {t_year}년 브랜드관 인기 제품 Top 5")
+            if not df_d.empty:
+                # 제품별 매출 집계 및 비중 계산
+                top5_df = df_d.groupby('상품명_매핑').agg({'매출_백만': 'sum'}).reset_index()
+                total_brand_sales = top5_df['매출_백만'].sum()
+                top5_df['비중(%)'] = (top5_df['매출_백만'] / total_brand_sales * 100)
+                top5_df = top5_df.sort_values('매출_백만', ascending=False).head(5)
+                
+                # 표 형식으로 출력
+                st.dataframe(
+                    top5_df.rename(columns={'상품명_매핑': '제품명', '매출_백만': '전환 매출액(백만원)'}),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "전환 매출액(백만원)": st.column_config.NumberColumn(format="%.1f"),
+                        "비중(%)": st.column_config.NumberColumn(format="%.1f%%")
+                    }
+                )
+            else:
+                st.info("해당 년도에 브랜드관을 통해 주문된 제품 데이터가 없습니다.")
+
         with col_r:
             st.markdown("#### 🏥 전환 고객 진료과 비중")
             if not df_d.empty: 
