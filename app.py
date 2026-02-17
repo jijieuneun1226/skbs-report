@@ -556,3 +556,4 @@ with tab5:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
+
