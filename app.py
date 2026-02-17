@@ -274,7 +274,7 @@ def render_product_strategy(df):
     <b>💡 분석 가이드:</b> 연간 최대 매출 월을 1.0으로 환산. 🟥 진할수록 성수기임을 의미합니다.
     </div>""", unsafe_allow_html=True)
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
-    # [수정] TypeError 방지를 위해 px.imshow에서 border 인자 제거 (성역 내부 유일한 오류 수정)
+    # [수정] TypeError border 인자 제거 (성역 내부 유일한 수정)
     st.plotly_chart(px.imshow(season_pivot.div(season_pivot.max(axis=1), axis=0), color_continuous_scale="Reds", aspect="auto"), use_container_width=True)
 
     with st.expander("🧩 **함께 팔기(Cross-selling) 기회 분석기**", expanded=True):
@@ -325,8 +325,9 @@ def classify_customers(df, target_year):
 DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
 data_load_res = load_data_from_drive(DRIVE_FILE_ID)
 if not data_load_res: st.stop()
-df_raw, brand_data_dict = data_load_res
+df_raw, brand_data_dict = data_load_res # [수정] 딕셔너리 데이터 받기
 
+# [수정 1 반영] URL 축약 대응 필터 로드
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
@@ -346,6 +347,7 @@ if is_edit_mode:
         sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sel_products)
         if st.button("🔗 뷰어용 공유 링크 생성"):
             base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
+            # [수정사항 1 반영] 전체 선택인 경우 'all'로 축약
             cat_p = "all" if len(sel_cats) == len(df_raw['제품군'].unique()) else "&cat=".join([urllib.parse.quote(val) for val in sel_cats])
             prod_p = "all" if len(sel_products) == len(df_raw['제품명'].unique()) else "&prod=".join([urllib.parse.quote(val) for val in sel_products])
             p_string = (f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}"
@@ -410,9 +412,9 @@ with tab2:
     st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
     with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
-        # [해결] KeyError 방지를 위해 최근구매일_str 생성
+        # [해결] KeyError 방지를 위해 최근구매일_str 생성 로직 선행
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
-        # [수정] 매출 상위 거래처 표 단위 백만원 고정 및 소수점 1자리 표시
+        # [수정] 단위 백만원 고정 및 소수점 1자리 표시
         event_vip = st.dataframe(ranking_v[['거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
                                  use_container_width=True, on_select="rerun", selection_mode="single-row", height=350,
                                  column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
@@ -573,7 +575,7 @@ with tab5:
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
 # --------------------------------------------------------------------------------
-# 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 및 단위 수정 완벽 반영
+# 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 완벽 복구
 # --------------------------------------------------------------------------------
 with tab6:
     st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
@@ -582,6 +584,7 @@ with tab6:
     if not brand_data_dict or brand_data_dict['Brand_Total'].empty:
         st.warning("🏠 브랜드관 분석 데이터가 없습니다."); 
     else:
+        # 제품명 매핑
         valid_p = df_raw['제품명'].unique()
         def map_p(n):
             c = str(n).replace('[SK]', '').replace('주', '').replace('0.5ml', '').strip()
@@ -589,6 +592,7 @@ with tab6:
                 if c[:5] in vp: return vp
             return str(n).strip()
 
+        # 데이터 환산
         df_t = brand_data_dict['Brand_Total'][brand_data_dict['Brand_Total']['년도'] == t_year]
         df_d = brand_data_dict['Brand_Direct_Sales'].copy()
         if not df_d.empty:
@@ -599,12 +603,14 @@ with tab6:
 
         df_m = brand_data_dict['Brand_Monthly'].copy()
         if not df_m.empty:
+            # 년도 필터 적용
             df_m = df_m[df_m['월'].astype(str).str.startswith(str(t_year))]
 
         uv, pv = df_t['UV'].sum() if not df_t.empty else 0, df_t['PV'].sum() if not df_t.empty else 0
         conv_sales, conv_cnt = df_d['매출_백만'].sum() if not df_d.empty else 0, df_d['사업자번호'].nunique() if not df_d.empty else 0
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
+        # Summary 디자인
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
@@ -622,7 +628,7 @@ with tab6:
         st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], 
                                "성과 지표": [f"{uv:,} 명", f"{conv_sales:,.1f} 백만원", f"{conv_cnt:,} 처", f"{atv:,.0f} 원"]}))
 
-        # [누락 복구] 차트 2종 (Line Chart, Pie Chart)
+        # [복구] 월별 추이 및 진료과 비중 차트
         col_l, col_r = st.columns([1.5, 1])
         with col_l:
             st.markdown("#### 📅 월별 유입 및 관심도 추이")
