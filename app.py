@@ -31,9 +31,12 @@ st.markdown("""
 
 st.title("📊 SKBS Sales Report")
 
-def get_p(key, default):
+# [수정사항 1] 공유 URL 길이를 줄이기 위해 전체 선택 시 'all'로 축약하는 로직 추가
+def get_p(key, default, df_full=None, col=None):
     res = params.get_all(key)
     if not res: return default
+    if 'all' in res and df_full is not None and col is not None:
+        return sorted(df_full[col].unique())
     if key in ['y', 'q', 'm']: return [int(x) for x in res]
     return res
 
@@ -153,7 +156,7 @@ def render_winback_quality(df_final, df_raw, current_year):
     st.markdown(f"### ♻️ {current_year}년 재유입 현황 분석")
     st.markdown("""<div class="info-box">
     <b>🔍 재유입 정의:</b> 직전 구매일로부터 <b>최소 180일(6개월) 이상 공백기</b> 이후 다시 구매가 발생한 거래처 (선택 기간 내 첫 구매 기준)<br>
-    <b>🚦 회복 퀄리티:</b> 과거 최고 매출 대비 현재 매출 수준<br>
+    <b>🚦 회복 퀄리티:</b> 과거 전성기(최고 매출) 대비 현재 매출 수준<br>
     - 🟢 <b>완전 회복:</b> 80% 이상 / 🟡 <b>회복 중:</b> 20~80% / 🔴 <b>재진입 초기:</b> 20% 미만<br>
     <b>📈 평균 회복률 뜻:</b> 재유입된 거래처들이 과거 가장 많이 구매했던 시기 대비 현재 평균적으로 몇 %까지 구매력이 회복되었는지를 나타냄
     </div>""", unsafe_allow_html=True)
@@ -246,7 +249,7 @@ def render_regional_deep_dive(df):
 
 def render_product_strategy(df):
     if df.empty: return
-    st.markdown("### 💊 제품별 심층 분석")
+    st.markdown("### 💊 제품별 전략 심층 분석")
     p_stats = df.groupby('제품명').agg(Sales=('매출액', 'sum'), Count=('사업자번호', 'nunique')).reset_index()
     p_stats['Bubble_Size'] = p_stats['Sales'].apply(lambda x: max(x, 0.1))
     
@@ -314,12 +317,13 @@ DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
+# [수정 1 반영] URL 축약 대응 필터 로드
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
 sel_months = get_p('m', sorted(df_raw['월'].unique()))
-sel_cats = get_p('cat', sorted(df_raw['제품군'].unique()))
-sel_products = get_p('prod', sorted(df_raw['제품명'].unique()))
+sel_cats = get_p('cat', sorted(df_raw['제품군'].unique()), df_raw, '제품군')
+sel_products = get_p('prod', sorted(df_raw['제품명'].unique()), df_raw, '제품명')
 
 if is_edit_mode:
     with st.sidebar:
@@ -335,11 +339,11 @@ if is_edit_mode:
         st.markdown("---")
         if st.button("🔗 뷰어용 공유 링크 생성"):
             base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
-            c_encoded = [urllib.parse.quote(val) for val in sel_channels]
-            cat_encoded = [urllib.parse.quote(val) for val in sel_cats]
-            prod_encoded = [urllib.parse.quote(val) for val in sel_products]
-            p_string = (f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(c_encoded)}&q={'&q='.join(map(str, sel_quarters))}"
-                        f"&m={'&m='.join(map(str, sel_months))}&cat={'&cat='.join(cat_encoded)}&prod={'&prod='.join(prod_encoded)}")
+            # [수정사항 1 반영] 전체 선택인 경우 'all'로 축약
+            cat_p = "all" if len(sel_cats) == len(df_raw['제품군'].unique()) else "&cat=".join([urllib.parse.quote(val) for val in sel_cats])
+            prod_p = "all" if len(sel_products) == len(df_raw['제품명'].unique()) else "&prod=".join([urllib.parse.quote(val) for val in sel_products])
+            p_string = (f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}"
+                        f"&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}")
             st.success("공유 링크가 생성되었습니다!"); st.code(base_url + p_string, language="text")
 
 df_final = df_raw[
@@ -361,8 +365,8 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("총 매출액 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['매출액'].sum():,.0f} 백만원")
         c2.metric("총 구매처수 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['사업자번호'].nunique():,} 처")
-        c3.metric("분기 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
-        c4.metric("분기 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
+        c3.metric("선택기간 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
+        c4.metric("선택기간 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
         st.markdown("---")
         col_a, col_b = st.columns([1, 1.5])
         with col_a: st.plotly_chart(px.pie(df_final, values='매출액', names='진료과', hole=0.4, title="진료과별 매출 비중"), use_container_width=True)
@@ -390,7 +394,7 @@ with tab2:
         st.write(f"• 평균 객단가: 처당 약 **{(total_s/df_final['사업자번호'].nunique()*100):,.0f}만원**")
         st.write(f"• 최고 매출 거래처: **{top_v['거래처명']}** ({top_v['매출액']:,.1f} 백만원)")
 
-        st.subheader("✔️ Insight)
+        st.subheader("✔️ Insight")
         st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 거래처 중 **{risk_cnt}처({risk_cnt}%)**가 90일 이상 구매가 없는 이탈 위험 상태입니다. 특히 **{top_v['거래처명']}**의 관리가 시급합니다.")
         st.write(f"• **신규 vs 이탈 밸런스:** 금기 신규 유입 {st_c.get('🆕 신규 (New)',0)}처 대비 이탈 {st_c.get('📉 1년 이탈',0)}처가 발생 중입니다. 기존 고객 수성에 집중이 필요합니다.")
         st.write(f"• **진료과 집중도 리스크:** 현재 매출의 **{(dept_sum.max()/total_s*100):.1f}%**가 **{dept_sum.index[0]}**에 편중되어 있습니다.")
@@ -402,7 +406,7 @@ with tab2:
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
         ranking_v['상태'] = (cur_d - ranking_v['최근구매일']).dt.days.apply(lambda x: '🚨 이탈위험' if x >= 90 else '✅ 정상')
-        event_vip = st.dataframe(ranking_v[['상태', '거래처명', '진료과', '매출액', '최근구매일_str']].style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True, on_select="rerun", selection_mode="single-row", height=350)
+        event_vip = st.dataframe(ranking_v[['상태', '거래처명', '진료과', '매출액', '최근구매일_str']], use_container_width=True, on_select="rerun", selection_mode="single-row", height=350)
         if len(event_vip.selection.rows) > 0:
             v_idx = ranking_v.index[event_vip.selection.rows[0]]
             st.dataframe(df_raw[df_raw['사업자번호'] == ranking_v.loc[v_idx, '사업자번호']].groupby('제품명').agg({'매출액': 'sum'}).sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
@@ -534,18 +538,18 @@ with tab5:
             acc_B = set(df_final[df_final['제품명'] == p_stats.iloc[1]['제품명']]['거래처명'].unique())
             st.write(f"• **교차 판매 기회:** 주력 제품인 **{p_stats.iloc[0]['제품명']}** 사용처 중 **{p_stats.iloc[1]['제품명']}**를 쓰지 않는 타겟 **{len(acc_A - acc_B)}처**를 확보했습니다.")
 
-    st.markdown("---")
+    # [수정사항 3 반영] 📦 제품별 판매 현황 제목 아래로 그래프 이동
+    st.markdown("### 📦 제품별 판매 현황")
     c_p1, c_p2 = st.columns(2)
     with c_p1: st.plotly_chart(px.bar(p_stats, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
     with c_p2: st.plotly_chart(px.pie(cat_sum.reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
     
     render_product_strategy(df_final)
     st.markdown("---")
-    st.markdown("### 📦 제품별 판매 현황")
+    st.markdown("### 📦 제품별 판매 현황 리스트")
     st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
     p_main_v = df_final.groupby('제품명').agg({'수량': 'sum', '매출액': 'sum', '사업자번호': 'nunique'}).reset_index().sort_values('매출액', ascending=False)
     ev_p_v = st.dataframe(p_main_v.rename(columns={'사업자번호':'구매처수'}).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True, on_select="rerun", selection_mode="single-row", height=300)
     if len(ev_p_v.selection.rows) > 0:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
-
