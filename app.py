@@ -7,6 +7,7 @@ import numpy as np
 import requests
 import io
 import re
+import gc # [중요] 메모리 관리 모듈 추가
 from datetime import timedelta
 
 # --------------------------------------------------------------------------------
@@ -26,8 +27,6 @@ st.markdown("""
     .metric-card {background-color: #f8f9fa; border-left: 5px solid #4e79a7; padding: 15px; border-radius: 5px; margin-bottom: 10px;}
     .info-box {padding: 10px; border-radius: 5px; font-size: 13px; margin-bottom: 15px; border: 1px solid #e0e0e0; line-height: 1.6;}
     .guide-text {color: #FF4B4B; font-size: 13px; font-weight: 600; margin-bottom: 10px;}
-    
-    /* [가독성 스타일] 배경 없이 글자색 강제 고정 */
     .fix-text { color: #000000 !important; font-weight: 500; font-size: 15px; line-height: 1.6; margin-bottom: 5px; }
     .fix-blue { color: #0044cc !important; font-weight: 800; font-size: 18px; margin-top: 10px; margin-bottom: 5px; }
     .fix-orange { color: #cc5500 !important; font-weight: 800; font-size: 18px; margin-top: 10px; margin-bottom: 5px; }
@@ -45,9 +44,9 @@ def get_p(key, default, df_full=None, col=None):
     return res
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 및 전처리
+# 2. 데이터 로드 및 전처리 (메모리 최적화 적용)
 # --------------------------------------------------------------------------------
-@st.cache_data(ttl=3600, max_entries=2)
+@st.cache_data(ttl=3600, max_entries=1) # [최적화] 캐시 엔트리 1개로 제한
 def load_data_from_drive(file_id):
     initial_url = f"https://drive.google.com/uc?export=download&id={file_id}"
     session = requests.Session()
@@ -64,6 +63,8 @@ def load_data_from_drive(file_id):
         if response.status_code != 200: return pd.DataFrame()
         file_bytes = io.BytesIO(response.content)
         df = pd.read_excel(file_bytes, engine='openpyxl')
+        del file_bytes # 메모리 해제
+        gc.collect()   # 가비지 컬렉션
     except Exception as e:
         st.error(f"데이터 로드 실패: {e}"); return pd.DataFrame()
 
@@ -74,50 +75,65 @@ def load_data_from_drive(file_id):
                 df.columns = df.iloc[idx].astype(str).str.replace(r'\s+', '', regex=True)
                 df = df.iloc[idx+1:].reset_index(drop=True)
                 break
+    
     col_map = {'매출일자':['매출일자','날짜','Date'],'제품명':['제품명변환','제품명'],'합계금액':['합계금액','매출액'],'수량':['수량','Qty'],'사업자번호':['사업자번호','BizNo'],'거래처명':['거래처명','병원명'],'진료과':['진료과'],'제품군':['제품군'],'지역':['지역']}
     for std, cands in col_map.items():
         if std in df.columns: continue
         for cand in cands:
             if cand in df.columns: df.rename(columns={cand:std}, inplace=True); break
+    
     try:
+        # [최적화] 필요한 컬럼만 남기고 나머지 drop 고려 (현재는 전체 유지하되 타입 최적화)
         df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce')
         df = df.dropna(subset=['매출일자'])
+        
+        # [최적화] int16, int8 등 작은 데이터 타입 사용
         df['년'] = df['매출일자'].dt.year.astype(np.int16)
         df['분기'] = df['매출일자'].dt.quarter.astype(np.int8)
         df['월'] = df['매출일자'].dt.month.astype(np.int8)
         df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
+        
+        # [최적화] float32 사용
         df['매출액'] = (pd.to_numeric(df.get('합계금액',0), errors='coerce').fillna(0)/1000000).astype(np.float32)
         df['수량'] = pd.to_numeric(df.get('수량',0), errors='coerce').fillna(0).astype(np.int32)
+        
         def classify_channel(group): return 'online' if str(group) in ['B2B','SAP','의사회원'] else 'offline'
-        df['판매채널'] = df.get('거래처그룹','기타').apply(classify_channel)
+        df['판매채널'] = df.get('거래처그룹','기타').apply(classify_channel).astype('category') # category 타입 사용
+        
         for col in ['거래처명','제품명','제품군','진료과','지역']:
             if col not in df.columns: df[col] = '미분류'
             else: df[col] = df[col].astype(str).replace('nan','미분류')
-        df['제품명'] = df['제품명'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
+            df[col] = df[col].astype('category') # category 타입으로 변환하여 메모리 절약
+            
+        df['제품명'] = df['제품명'].astype(str).str.replace(r'\(.*?\)', '', regex=True).str.strip()
+        gc.collect() # 연산 후 메모리 청소
+        
     except Exception as e:
         st.error(f"전처리 오류: {e}"); return pd.DataFrame()
     return df
 
-@st.cache_data
+@st.cache_data(max_entries=1)
 def classify_customers(df, target_year):
     cols_to_agg = {'거래처명':'last','매출일자':'max'}
     if '진료과' in df.columns: cols_to_agg['진료과'] = 'last'
     if '지역' in df.columns: cols_to_agg['지역'] = 'last'
+    
     cust_year = df.groupby(['사업자번호', '년']).size().unstack(fill_value=0)
     base_info = df.sort_values('매출일자').groupby('사업자번호').agg(cols_to_agg).rename(columns={'매출일자':'최근구매일'})
+    
     sales_ty = df[df['년']==target_year].groupby('사업자번호')['매출액'].sum()
     base_info['해당년도_매출'] = base_info.index.map(sales_ty).fillna(0)
+    
     classification = {}
     for biz in base_info.index:
         has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz, target_year] > 0)
         has_t1 = (target_year-1 in cust_year.columns) and (cust_year.loc[biz, target_year-1] > 0)
         has_h = cust_year.loc[biz, [y for y in cust_year.columns if y < target_year-1]].sum() > 0 if len(cust_year.columns)>1 else False
-        if has_ty:
-            status = "✅ 기존 (유지)" if has_t1 else ("🔄 재유입 (복귀)" if has_h else "🆕 신규 (New)")
-        else:
-            status = "📉 1년 이탈" if has_t1 else "💤 장기 이탈"
+        status = "✅ 기존 (유지)" if has_ty and has_t1 else ("🔄 재유입 (복귀)" if has_ty and has_h else ("🆕 신규 (New)" if has_ty else ("📉 1년 이탈" if has_t1 else "💤 장기 이탈")))
         classification[biz] = status
+        
     base_info['상태'] = base_info.index.map(classification)
+    gc.collect()
     return base_info
 
 # --------------------------------------------------------------------------------
@@ -145,18 +161,17 @@ if is_edit_mode:
         sel_months = st.multiselect("월", avail_m, default=[m for m in sel_months if m in avail_m])
         sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sel_cats)
         sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sel_products)
-        st.markdown("---")
         if st.button("🔗 축약 공유 링크 생성"):
-            base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/"
             cat_p = "all" if len(sel_cats) == len(df_raw['제품군'].unique()) else "&cat=".join([urllib.parse.quote(x) for x in sel_cats])
             prod_p = "all" if len(sel_products) == len(df_raw['제품명'].unique()) else "&prod=".join([urllib.parse.quote(x) for x in sel_products])
             p_str = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}"
-            st.code(base_url + p_str)
+            st.code("https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" + p_str)
 
 df_final = df_raw[(df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) & (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) & (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))]
+gc.collect()
 
 # --------------------------------------------------------------------------------
-# 4. 분석 모듈 (함수 복구 및 정비)
+# 4. 분석 모듈 (함수 복구)
 # --------------------------------------------------------------------------------
 def render_smart_overview(df_curr, df_raw_full):
     if df_curr.empty: return
@@ -235,7 +250,6 @@ def render_regional_deep_dive(df):
             risk.append({'지역': r, '의존도': (r_df.groupby('거래처명')['매출액'].sum().max() / r_df['매출액'].sum() * 100)})
         st.plotly_chart(px.bar(pd.DataFrame(risk).sort_values('의존도', ascending=False), x='의존도', y='지역', orientation='h', color='의존도', color_continuous_scale='Reds', title="핵심 거점 매출 의존도 (%)"), use_container_width=True)
 
-# [복구 완료] 제품 전략 심층 분석 함수
 def render_product_strategy(df):
     if df.empty: return
     st.markdown("### 💊 제품별 전략 심층 분석")
@@ -338,12 +352,11 @@ with tab3:
     render_winback_quality(df_final, df_raw, sel_years[0])
 
 with tab4:
-    if not df_final.empty:
-        reg_v = df_final.groupby('지역').agg(Sales=('매출액','sum'), Count=('사업자번호','nunique')).reset_index().sort_values('Sales', ascending=False)
-        st.markdown("<p class='fix-blue'>📊 데이터 요약</p>", unsafe_allow_html=True)
-        st.markdown(f"<p class='fix-text'>• 최다 거래 지역: **{reg_v.sort_values('Count', ascending=False).iloc[0]['지역']}** ({reg_v['Count'].max()} 처) / 최고 매출 지역: **{reg_v.iloc[0]['지역']}** ({reg_v.iloc[0]['Sales']:,.0f}M)</p>", unsafe_allow_html=True)
-        st.markdown("<p class='fix-orange'>💡 스마트 인사이트</p>", unsafe_allow_html=True)
-        st.markdown(f"<p class='fix-text'>• <b>커버리지:</b> 현재 **{reg_v.iloc[0]['지역']}** 지역이 핵심 매출 거점 역할을 수행 중입니다.</p>", unsafe_allow_html=True)
+    reg_v = df_final.groupby('지역').agg(Sales=('매출액','sum'), Count=('사업자번호','nunique')).reset_index().sort_values('Sales', ascending=False)
+    st.markdown("<p class='fix-blue'>📊 데이터 요약</p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='fix-text'>• 최다 거래 지역: **{reg_v.sort_values('Count', ascending=False).iloc[0]['지역']}** ({reg_v['Count'].max()} 처) / 최고 매출 지역: **{reg_v.iloc[0]['지역']}** ({reg_v.iloc[0]['Sales']:,.0f}M)</p>", unsafe_allow_html=True)
+    st.markdown("<p class='fix-orange'>💡 스마트 인사이트</p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='fix-text'>• <b>커버리지:</b> 현재 **{reg_v.iloc[0]['지역']}** 지역이 핵심 매출 거점 역할을 수행 중입니다.</p>", unsafe_allow_html=True)
     render_regional_deep_dive(df_final)
     st.markdown("### 🗺️ 지역별 상세 실적 리스트")
     st.markdown('<p class="guide-text">💡 지역 선택 시 우측 비중과 하단 상세 리스트가 표시됩니다.</p>', unsafe_allow_html=True)
