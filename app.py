@@ -606,8 +606,6 @@ with tab6:
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
-         st.markdown("""<div class="info-box">
-    <b>💡 분석 지표 기준:</b> 브랜드관 전환 매출 : 브랜드관을 통해 구매한 금액</div>""", unsafe_allow_html=True)
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
             with c1:
@@ -651,4 +649,5 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
 
