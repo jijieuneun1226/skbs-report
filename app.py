@@ -62,7 +62,7 @@ def load_data_from_drive(file_id):
         if response.status_code != 200: return pd.DataFrame(), brand_data
         file_bytes = io.BytesIO(response.content)
         
-        # [수정] 원본 df 로드 로직 유지하면서 멀티 시트 대응
+        # [수정] 원본 df 로드 로직 유지하면서 멀티 시트만 대응
         xls = pd.ExcelFile(file_bytes, engine='openpyxl')
         df = pd.read_excel(xls, sheet_name='SKBS' if 'SKBS' in xls.sheet_names else 0)
         for sn in brand_data.keys():
@@ -126,7 +126,7 @@ def load_data_from_drive(file_id):
     return df, brand_data
 
 # --------------------------------------------------------------------------------
-# 3. [SK분석 기본 폼] 분석 함수 정의 (성역: 사용자 원본 그대로 보존)
+# 3. [SK분석 기본 폼] 분석 함수 정의 (성역 보존)
 # --------------------------------------------------------------------------------
 
 def render_smart_overview(df_curr, df_raw):
@@ -274,7 +274,7 @@ def render_product_strategy(df):
     <b>💡 분석 가이드:</b> 연간 최대 매출 월을 1.0으로 환산. 🟥 진할수록 성수기임을 의미합니다.
     </div>""", unsafe_allow_html=True)
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
-    # [오류 수정] TypeError 해결을 위해 border 인자 제거
+    # [수정] TypeError border 인자 제거
     st.plotly_chart(px.imshow(season_pivot.div(season_pivot.max(axis=1), axis=0), color_continuous_scale="Reds", aspect="auto"), use_container_width=True)
 
     with st.expander("🧩 **함께 팔기(Cross-selling) 기회 분석기**", expanded=True):
@@ -352,11 +352,7 @@ if is_edit_mode:
                         f"&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}")
             st.success("공유 링크가 생성되었습니다!"); st.code(base_url + p_string, language="text")
 
-df_final = df_raw[
-    (df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) &
-    (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) &
-    (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))
-]
+df_final = df_raw[(df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) & (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) & (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))]
 
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성
@@ -410,16 +406,16 @@ with tab2:
     st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
     with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
-        # [해결] KeyError 방지를 위해 최근구매일_str 생성을 선행함
+        # [해결] KeyError 방지를 위해 최근구매일_str 생성
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
-        # [수정 사항] 단위 백만원 고정 및 소수점 1자리 표시
+        # [수정] 단위 백만원 고정 및 소수점 1자리 표시
         event_vip = st.dataframe(ranking_v[['거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
                                  use_container_width=True, on_select="rerun", selection_mode="single-row", height=350,
                                  column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
         
         if len(event_vip.selection.rows) > 0:
             v_idx = ranking_v.index[event_vip.selection.rows[0]]
-            # [수정 사항] 클릭 시 '수량' 컬럼 추가 및 백만원 서식
+            # [수정] 행 클릭 시 '수량' 컬럼 추가 및 백만원 서식 적용
             st.dataframe(df_raw[df_raw['사업자번호'] == ranking_v.loc[v_idx, '사업자번호']].groupby('제품명').agg({'매출액': 'sum', '수량': 'sum'}).sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,} 개'}), use_container_width=True)
     st.markdown("---")
     c_s1, c_s2 = st.columns([1, 2])
@@ -430,7 +426,7 @@ with tab2:
     st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
     display_cls = cls_d[cls_d['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).copy()
     display_cls['최근구매일_str'] = display_cls['최근구매일'].dt.strftime('%Y-%m-%d')
-    # [수정 사항] 그룹별 표 매출액 단위 백만원 고정
+    # [수정] 그룹별 표 매출액 단위 백만원 고정 및 서식
     event_cls = st.dataframe(display_cls[['거래처명', '진료과', '최근구매일_str', '해당년도_매출']].rename(columns={'해당년도_매출':'매출액(백만원)', '최근구매일_str':'최근구매일'}), 
                              use_container_width=True, on_select="rerun", selection_mode="single-row",
                              column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
@@ -481,6 +477,7 @@ with tab5:
     c_p1, c_p2 = st.columns(2)
     with c_p1: st.plotly_chart(px.bar(p_stats_v5, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
     with c_p2: st.plotly_chart(px.pie(cat_sum_v5.reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
+    
     render_product_strategy(df_final)
     st.markdown("---")
     st.markdown("### 📦 제품별 판매 현황 리스트")
@@ -492,7 +489,7 @@ with tab5:
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
 # --------------------------------------------------------------------------------
-# [누락 데이터 복구] 🏠 6. 브랜드관 성과 분석
+# 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 및 단위 수정 완벽 반영
 # --------------------------------------------------------------------------------
 with tab6:
     st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
@@ -528,7 +525,7 @@ with tab6:
         conv_cnt = df_d['사업자번호'].nunique() if not df_d.empty else 0
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
-        # Summary 디자인
+        # Summary 디자인 (1번탭 스타일)
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
@@ -546,7 +543,7 @@ with tab6:
         st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], 
                                "성과 지표": [f"{uv:,} 명", f"{conv_sales:,.1f} 백만원", f"{conv_cnt:,} 처", f"{atv:,.0f} 원"]}))
 
-        # [누락 복구] 월별 추이 및 진료과 비중 차트
+        # [복구] 차트 2종 (Line Chart, Pie Chart)
         col_l, col_r = st.columns([1.5, 1])
         with col_l:
             st.markdown("#### 📅 월별 유입 및 관심도 추이")
