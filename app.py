@@ -31,6 +31,7 @@ st.markdown("""
 
 st.title("📊 SKBS Sales Report")
 
+# [수정사항 1] 공유 URL 길이를 줄이기 위해 전체 선택 시 'all'로 축약하는 로직 추가
 def get_p(key, default, df_full=None, col=None):
     res = params.get_all(key)
     if not res: return default
@@ -60,6 +61,8 @@ def load_data_from_drive(file_id):
         
         if response.status_code != 200: return pd.DataFrame(), brand_data
         file_bytes = io.BytesIO(response.content)
+        
+        # [수정] 원본 df 로드 로직 유지하면서 멀티 시트만 대응
         xls = pd.ExcelFile(file_bytes, engine='openpyxl')
         df = pd.read_excel(xls, sheet_name='SKBS' if 'SKBS' in xls.sheet_names else 0)
         for sn in brand_data.keys():
@@ -123,7 +126,7 @@ def load_data_from_drive(file_id):
     return df, brand_data
 
 # --------------------------------------------------------------------------------
-# 3. [SK분석 기본 폼] 분석 함수 정의
+# 3. [원본 100% 동일] 분석 함수 정의
 # --------------------------------------------------------------------------------
 
 def render_smart_overview(df_curr, df_raw):
@@ -271,6 +274,7 @@ def render_product_strategy(df):
     <b>💡 분석 가이드:</b> 연간 최대 매출 월을 1.0으로 환산. 🟥 진할수록 성수기임을 의미합니다.
     </div>""", unsafe_allow_html=True)
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
+    # [수정] TypeError border=True 인자 제거
     st.plotly_chart(px.imshow(season_pivot.div(season_pivot.max(axis=1), axis=0), color_continuous_scale="Reds", aspect="auto"), use_container_width=True)
 
     with st.expander("🧩 **함께 팔기(Cross-selling) 기회 분석기**", expanded=True):
@@ -316,13 +320,14 @@ def classify_customers(df, target_year):
     return base_info
 
 # --------------------------------------------------------------------------------
-# 4. 필터 및 메인 로직 실행
+# 4. 필터 및 실행
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
-data_res = load_data_from_drive(DRIVE_FILE_ID)
-if not data_res: st.stop()
-df_raw, brand_data_dict = data_res
+data_load_res = load_data_from_drive(DRIVE_FILE_ID)
+if not data_load_res: st.stop()
+df_raw, brand_data_dict = data_load_res
 
+# URL 필터 로드
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
@@ -340,8 +345,19 @@ if is_edit_mode:
         sel_months = st.multiselect("월", avail_m, default=[m for m in sel_months if m in avail_m])
         sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sel_cats)
         sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sel_products)
+        if st.button("🔗 뷰어용 공유 링크 생성"):
+            base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
+            cat_p = "all" if len(sel_cats) == len(df_raw['제품군'].unique()) else "&cat=".join([urllib.parse.quote(val) for val in sel_cats])
+            prod_p = "all" if len(sel_products) == len(df_raw['제품명'].unique()) else "&prod=".join([urllib.parse.quote(val) for val in sel_products])
+            p_string = (f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}"
+                        f"&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}")
+            st.success("공유 링크가 생성되었습니다!"); st.code(base_url + p_string, language="text")
 
-df_final = df_raw[(df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) & (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) & (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))]
+df_final = df_raw[
+    (df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) &
+    (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) &
+    (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))
+]
 
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성
@@ -369,6 +385,7 @@ with tab2:
     if not df_final.empty:
         total_s = df_final['매출액'].sum()
         ranking_v = df_final.groupby(['사업자번호', '거래처명', '진료과']).agg({'매출액': 'sum'}).sort_values('매출액', ascending=False).head(100).reset_index()
+        t100_sum = ranking_v['매출액'].sum()
         cls_d = classify_customers(df_raw, sel_years[0])
         st_c = cls_d['상태'].value_counts()
         last_p = df_raw.groupby('사업자번호')['매출일자'].max()
@@ -379,66 +396,114 @@ with tab2:
         dept_sum = df_final.groupby('진료과')['매출액'].sum().sort_values(ascending=False)
 
         st.subheader("✔️ Summary")
-        st.write(f"• 상위 100처 매출 합계: **{ranking_v['매출액'].sum()/100:,.1f}억원** (전체 매출의 {(ranking_v['매출액'].sum()/total_s*100):.1f}% 차지)")
-        st.write(f"• 거래처 상태 분포: **기존({st_c.get('✅ 기존 (유지)',0)}처), 신규({st_c.get('🆕 신규 (New)',0)}처), 이탈({st_c.get('📉 이탈',0)}처)**")
+        st.write(f"• 상위 100처 매출 합계: **{t100_sum/100:,.1f}억원** (전체 매출의 {(t100_sum/total_s*100):.1f}% 차지)")
+        st.write(f"• 거래처 상태 분포: **기존({st_c.get('✅ 기존 (유지)',0)}처), 신규({st_c.get('🆕 신규 (New)',0)}처), 재유입({st_c.get('🔄 재유입 (복귀)',0)}처), 이탈({st_c.get('📉 1년 이탈',0)}처)**")
+        st.write(f"• 평균 객단가: 처당 약 **{(total_s/df_final['사업자번호'].nunique()*100):,.0f}만원**")
         st.write(f"• 최고 매출 거래처: **{top_v['거래처명']}** ({top_v['매출액']:,.1f} 백만원)")
-        st.subheader("✔️ Insight")
-        st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 거래처 중 **{risk_cnt}처**가 90일 이상 구매가 없는 이탈 위험 상태입니다. 특히 **{top_v['거래처명']}**의 관리가 시급합니다.")
 
-        st.markdown("---")
-        st.markdown("### 🏆 상위 거래처 상세 분석")
-        
-        # [해결] 최근구매일_str 컬럼을 데이터프레임 선택 전에 먼저 생성
+        st.subheader("✔️ Insight")
+        st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 거래처 중 **{risk_cnt}처({risk_cnt}%)**가 90일 이상 구매가 없는 이탈 위험 상태입니다. 특히 **{top_v['거래처명']}**의 관리가 시급합니다.")
+        st.write(f"• **신규 vs 이탈 밸런스:** 금기 신규 유입 {st_c.get('🆕 신규 (New)',0)}처 대비 이탈 {st_c.get('📉 1년 이탈',0)}처가 발생 중입니다. 기존 고객 수성에 집중이 필요합니다.")
+        st.write(f"• **진료과 집중도 리스크:** 현재 매출의 **{(dept_sum.max()/total_s*100):.1f}%**가 **{dept_sum.index[0]}**에 편중되어 있습니다.")
+
+    st.markdown("---")
+    st.markdown("### 🏆 상위 거래처 및 거래처 분류 상세 분석")
+    st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
+    with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
+        st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
+        # [해결] 최근구매일_str 생성
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
-        
-        # [수정] 매출액 단위 백만원 고정 및 서식 적용
+        # [수정 사항 1] 단위 백만원 고정 및 소수점 1자리 표시
         event_vip = st.dataframe(ranking_v[['거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
                                  use_container_width=True, on_select="rerun", selection_mode="single-row", height=350,
                                  column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
         
         if len(event_vip.selection.rows) > 0:
-            v_idx = event_vip.selection.rows[0]
-            v_biz = ranking_v.iloc[v_idx]['사업자번호']
-            # [수정] 클릭 시 '수량' 컬럼 추가 및 백만원 서식 적용
+            v_idx = ranking_v.index[event_vip.selection.rows[0]]
+            v_biz = ranking_v.loc[v_idx, '사업자번호']
+            # [수정 사항 2] 수량 컬럼 추가 및 백만원 서식
             st.dataframe(df_raw[df_raw['사업자번호'] == v_biz].groupby('제품명').agg({'매출액': 'sum', '수량': 'sum'}).sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,} 개'}), use_container_width=True)
-
-        st.markdown("---")
+    st.markdown("---")
+    c_s1, c_s2 = st.columns([1, 2])
+    with c_s1:
+        st.dataframe(cls_d['상태'].value_counts().reset_index().rename(columns={'count':'거래처수'}), use_container_width=True)
         sel_st = st.selectbox("👇 분석할 그룹 선택", sorted(cls_d['상태'].unique()), key="p2_sel")
-        display_cls = cls_d[cls_d['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).copy()
-        display_cls['최근구매일_str'] = display_cls['최근구매일'].dt.strftime('%Y-%m-%d')
-        # [수정] 그룹별 표 매출액 단위 백만원 고정
-        event_cls = st.dataframe(display_cls[['거래처명', '진료과', '최근구매일_str', '해당년도_매출']].rename(columns={'해당년도_매출':'매출액(백만원)', '최근구매일_str':'최근구매일'}), 
-                                 use_container_width=True, on_select="rerun", selection_mode="single-row",
-                                 column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
-        if len(event_cls.selection.rows) > 0:
-            row_biz = display_cls.index[event_cls.selection.rows[0]]
-            st.dataframe(df_raw[df_raw['사업자번호'] == row_biz].sort_values('매출일자', ascending=False).head(20).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,}'}), use_container_width=True)
+    with c_s2: st.plotly_chart(px.pie(cls_d[cls_d['상태'] == sel_st], names='진료과', title="진료과 분포"), use_container_width=True)
+    st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
+    display_cls = cls_d[cls_d['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).copy()
+    display_cls['최근구매일_str'] = display_cls['최근구매일'].dt.strftime('%Y-%m-%d')
+    # [수정 사항 3] 그룹별 표 단위 백만원 고정
+    event_cls = st.dataframe(display_cls[['거래처명', '진료과', '최근구매일_str', '해당년도_매출']].rename(columns={'해당년도_매출':'매출액(백만원)', '최근구매일_str':'최근구매일'}), 
+                             use_container_width=True, on_select="rerun", selection_mode="single-row",
+                             column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
+    if len(event_cls.selection.rows) > 0:
+        row_biz = display_cls.index[event_cls.selection.rows[0]]
+        h_df = df_raw[df_raw['사업자번호'] == row_biz].sort_values('매출일자', ascending=False).head(20).copy()
+        h_df['매출일자_str'] = h_df['매출일자'].dt.strftime('%Y-%m-%d')
+        st.dataframe(h_df[['매출일자_str', '제품명', '매출액', '수량']].rename(columns={'매출일자_str':'매출일자'}).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,}'}), use_container_width=True)
 
-with tab3: render_winback_quality(df_final, df_raw, sel_years[0])
-with tab4: render_regional_deep_dive(df_final)
+with tab3:
+    render_winback_quality(df_final, df_raw, sel_years[0])
+    st.markdown("---")
+    st.markdown("### 🔄 재유입 기여 비중 및 이탈 전 구매 품목")
+    df_f = df_raw.sort_values(['사업자번호', '매출일자']).copy()
+    df_f['이전_제품'] = df_f.groupby('사업자번호')['제품명'].shift(1); df_f['구매간격'] = (df_f['매출일자'] - df_f.groupby('사업자번호')['매출일자'].shift(1)).dt.days
+    res = df_final.merge(df_f[['사업자번호', '매출일자', '이전_제품', '구매간격']], on=['사업자번호', '매출일자'], how='left')
+    res = res[res['구매간격'] >= 180]
+    if not res.empty:
+        col_p, col_t = st.columns([1, 1])
+        with col_p: st.plotly_chart(px.pie(res, values='매출액', names='제품명', title="재유입 매출 기여 비중"), use_container_width=True)
+        with col_t:
+            st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
+            res_sum = res.groupby('제품명').agg({'사업자번호': 'nunique', '매출액': 'sum'}).reset_index().sort_values('사업자번호', ascending=False)
+            ev_res = st.dataframe(res_sum.rename(columns={'사업자번호':'재유입처수', '매출액':'매출액(백만원)'}).style.format({'매출액(백만원)': '{:,.1f}'}), use_container_width=True, on_select="rerun", selection_mode="single-row")
+        if len(ev_res.selection.rows) > 0:
+            s_p = res_sum.iloc[ev_res.selection.rows[0]]['제품명']
+            st.plotly_chart(px.bar(res[res['제품명'] == s_p].groupby('이전_제품').size().reset_index(name='count').sort_values('count', ascending=False).head(10), x='count', y='이전_제품', orientation='h', title=f"[{s_p}] 복귀 고객의 과거 사용 제품"), use_container_width=True)
+
+with tab4:
+    render_regional_deep_dive(df_final)
+    st.markdown("---")
+    st.markdown("### 🗺️ 지역별 상세 실적 리스트")
+    reg_main = df_final.groupby('지역').agg({'매출액': 'sum', '사업자번호': 'nunique'}).reset_index().sort_values('매출액', ascending=False)
+    c_r1, c_r2 = st.columns([1, 1.5])
+    with c_r1:
+        st.markdown('<p class="guide-text">💡 지역 선택 시 상세 리스트 연동</p>', unsafe_allow_html=True)
+        sel_r_v = st.selectbox("🔎 분석할 지역 선택", reg_main['지역'].unique(), key="p4_reg_v")
+        st.dataframe(reg_main.rename(columns={'사업자번호':'구매처수'}).style.format({'매출액': '{:,.0f} 백만원'}), use_container_width=True)
+    with c_r2:
+        if sel_r_v: st.plotly_chart(px.pie(df_final[df_final['지역'] == sel_r_v], values='매출액', names='제품명', hole=0.3, title=f"[{sel_r_v}] 제품 비중"), use_container_width=True)
+    if sel_r_v:
+        st.dataframe(df_final[df_final['지역'] == sel_r_v].groupby(['거래처명', '제품명']).agg({'매출액': 'sum', '수량': 'sum'}).reset_index().sort_values('매출액', ascending=False).head(50).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
+
 with tab5:
+    p_stats_v5 = df_final.groupby('제품명').agg(Sales=('매출액', 'sum'), Qty=('수량', 'sum'), Count=('사업자번호', 'nunique')).reset_index().sort_values('Sales', ascending=False)
+    cat_sum_v5 = df_final.groupby('제품군')['매출액'].sum().sort_values(ascending=False)
     st.markdown("### 📦 제품별 판매 현황")
-    p_stats_v5 = df_final.groupby('제품명').agg(Sales=('매출액', 'sum')).reset_index().sort_values('Sales', ascending=False)
     c_p1, c_p2 = st.columns(2)
     with c_p1: st.plotly_chart(px.bar(p_stats_v5, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
-    with c_p2: st.plotly_chart(px.pie(df_final.groupby('제품군')['매출액'].sum().reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
+    with c_p2: st.plotly_chart(px.pie(cat_sum_v5.reset_index(), values='매출액', names='제품군', hole=0.3, title="제품군별 매출 비중"), use_container_width=True)
+    
     render_product_strategy(df_final)
     st.markdown("---")
     st.markdown("### 📦 제품별 판매 현황 리스트")
+    st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
     p_main_v = df_final.groupby('제품명').agg({'수량': 'sum', '매출액': 'sum', '사업자번호': 'nunique'}).reset_index().sort_values('매출액', ascending=False)
     ev_p_v = st.dataframe(p_main_v.rename(columns={'사업자번호':'구매처수'}).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True, on_select="rerun", selection_mode="single-row", height=300)
     if len(ev_p_v.selection.rows) > 0:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
-# [복구 및 데이터 누락 해결] 🏠 6. 브랜드관 성과 분석
+# --------------------------------------------------------------------------------
+# 6. [수정 사항 4 반영] 🏠 6. 브랜드관 성과 분석 (누락된 차트 2종 완벽 복구)
+# --------------------------------------------------------------------------------
 with tab6:
     st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
     t_year = sel_years[0]
-    if brand_data_dict['Brand_Total'].empty:
+    
+    if not brand_data_dict or brand_data_dict['Brand_Total'].empty:
         st.warning("🏠 브랜드관 분석 데이터가 없습니다."); 
     else:
-        # 제품명 매핑 및 필터링
         valid_p = df_raw['제품명'].unique()
         def map_p(n):
             c = str(n).replace('[SK]', '').replace('주', '').replace('0.5ml', '').strip()
@@ -456,34 +521,30 @@ with tab6:
 
         df_m = brand_data_dict['Brand_Monthly'].copy()
         if not df_m.empty:
-            # 년도 필터 적용
             df_m = df_m[df_m['월'].astype(str).str.startswith(str(t_year))]
 
-        # 지표 계산
         uv, pv = df_t['UV'].sum() if not df_t.empty else 0, df_t['PV'].sum() if not df_t.empty else 0
-        sales_m = df_d['매출_백만'].sum() if not df_d.empty else 0
-        count = df_d['사업자번호'].nunique() if not df_d.empty else 0
-        atv = (sales_m * 1000000 / count) if count > 0 else 0
+        conv_sales, conv_cnt = df_d['매출_백만'].sum() if not df_d.empty else 0, df_d['사업자번호'].nunique() if not df_d.empty else 0
+        atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
-        # Summary 디자인 (1번탭 스타일)
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
             with c1:
-                st.metric("💰 브랜드관 전환 매출", f"{sales_m:,.1f} 백만원")
+                st.metric("💰 브랜드관 전환 매출", f"{conv_sales:,.1f} 백만원")
                 if not df_m.empty: st.area_chart(df_m.set_index('월')['UV'], height=50, color="#4e79a7")
             with c2:
                 st.metric("👥 유입 고객 (UV)", f"{uv:,} 명")
-                if uv > 0: st.progress(count / uv, text=f"전환율 {(count/uv*100):.1f}%")
+                if uv > 0: st.progress(conv_cnt / uv, text=f"전환율 {(conv_cnt/uv*100):.1f}%")
             with c3:
                 st.metric("💳 평균 객단가 (ATV)", f"{atv:,.0f} 원")
                 st.write(f"누적 페이지뷰: **{pv:,} PV**")
 
         st.markdown("#### 📊 브랜드관 운영 총괄 성과")
         st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], 
-                               "성과 지표": [f"{uv:,} 명", f"{sales_m:,.1f} 백만원", f"{count:,} 처", f"{atv:,.0f} 원"]}))
+                               "성과 지표": [f"{uv:,} 명", f"{conv_sales:,.1f} 백만원", f"{conv_cnt:,} 처", f"{atv:,.0f} 원"]}))
 
-        # [누락 데이터 차트 복구] 월별 추이 및 진료과 비중
+        # [누락 복구] 차트 2종
         col_l, col_r = st.columns([1.5, 1])
         with col_l:
             st.markdown("#### 📅 월별 유입 및 관심도 추이")
