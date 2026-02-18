@@ -588,7 +588,6 @@ with tab5:
 # 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 및 단위 수정 완벽 반영
 # --------------------------------------------------------------------------------
 with tab6:
-    st.markdown("### 🏠 브랜드관 성과 Summary ({t_year}년)")
     t_year = sel_years[0]
     
     if not brand_data_dict or brand_data_dict['Brand_Total'].empty:
@@ -616,7 +615,7 @@ with tab6:
         uv, pv = df_t['UV'].sum() if not df_t.empty else 0, df_t['PV'].sum() if not df_t.empty else 0
         conv_sales, conv_cnt = df_d['매출_백만'].sum() if not df_d.empty else 0, df_d['사업자번호'].nunique() if not df_d.empty else 0
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
-
+        st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
             with c1:
@@ -660,6 +659,7 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
 
 
 
