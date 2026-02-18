@@ -381,6 +381,7 @@ with tab1:
             st.plotly_chart(px.bar(monthly_b, x='년월', y='매출액', text_auto='.1f', title="월별 매출 추이", color_discrete_sequence=['#a8dadc']), use_container_width=True)
 
 with tab2:
+    with tab2:
     if not df_final.empty:
         total_s = df_final['매출액'].sum()
         ranking_v = df_final.groupby(['사업자번호', '거래처명', '진료과']).agg({'매출액': 'sum'}).sort_values('매출액', ascending=False).head(100).reset_index()
@@ -390,7 +391,11 @@ with tab2:
         last_p = df_raw.groupby('사업자번호')['매출일자'].max()
         ranking_v['최근구매일'] = ranking_v['사업자번호'].map(last_p)
         cur_d = df_raw['매출일자'].max()
-        risk_cnt = len(ranking_v[(cur_d - ranking_v['최근구매일']).dt.days >= 90])
+        
+        # [요청하신 로직 삽입]
+        ranking_v['상태'] = (cur_d - ranking_v['최근구매일']).dt.days.apply(lambda x: '🚨 이탈위험' if x >= 90 else '✅ 정상')
+        
+        risk_cnt = len(ranking_v[ranking_v['상태'] == '🚨 이탈위험'])
         top_v = ranking_v.iloc[0]
         dept_sum = df_final.groupby('진료과')['매출액'].sum().sort_values(ascending=False)
 
@@ -410,20 +415,20 @@ with tab2:
     st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
     with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
-        # [해결] KeyError 방지를 위해 최근구매일_str 생성
+        
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
-        # [수정] 매출 상위 거래처 표 단위 백만원 고정 및 소수점 1자리 표시
-        ranking_v['상태'] = (cur_d - ranking_v['최근구매일']).dt.days.apply(lambda x: '🚨 이탈위험' if x >= 90 else '✅ 정상')
-        event_vip = st.dataframe(ranking_v[['거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
+        
+        # [수정] 표에 '상태' 컬럼을 추가함
+        event_vip = st.dataframe(ranking_v[['상태', '거래처명', '진료과', '매출액', '최근구매일_str']].rename(columns={'매출액':'매출액(백만원)'}), 
                                  use_container_width=True, on_select="rerun", selection_mode="single-row", height=350,
                                  column_config={"매출액(백만원)": st.column_config.NumberColumn(format="%.1f")})
         
         if len(event_vip.selection.rows) > 0:
             v_idx = ranking_v.index[event_vip.selection.rows[0]]
             v_biz = ranking_v.loc[v_idx, '사업자번호']
-            # [수정] 행 클릭 시 '수량' 컬럼 추가 및 백만원 단위 서식 적용
             st.dataframe(df_raw[df_raw['사업자번호'] == v_biz].groupby('제품명').agg({'매출액': 'sum', '수량': 'sum'}).sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원', '수량': '{:,} 개'}), use_container_width=True)
-    st.markdown("---")
+
+    # ... (이후 c_s1, c_s2 및 하단 로직 동일)
     c_s1, c_s2 = st.columns([1, 2])
     with c_s1:
         st.dataframe(cls_d['상태'].value_counts().reset_index().rename(columns={'count':'거래처수'}), use_container_width=True)
@@ -650,6 +655,7 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
 
 
 
