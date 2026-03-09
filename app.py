@@ -566,7 +566,6 @@ with tab5:
         st.write(f"• 최다 판매 제품: **{p_stats.iloc[0]['제품명']}** ({int(p_stats.iloc[0]['Qty']):,}개 / {p_stats.iloc[0]['Sales']:,.0f} 백만원)")
         st.write(f"• 성장률 1위 제품: **{top_g_p['제품명']}** (전년비 **{top_g_p['Growth']:+.1f}%**)")
         st.write(f"• 최대 매출 제품군: **{cat_sum.index[0]}** (전체 매출의 **{cat_sum.max()/df_final['매출액'].sum()*100:.1f}%** 차지)")
-        st.write(f"• 시장 침투율: 전체 거래처 중 **{len(df_final['사업자번호'].unique())/df_raw['사업자번호'].nunique()*100:.1f}%**가 선택 제품 구매 중")
 
         st.subheader("✔️ Insight")
         st.write(f"• **제품별 판매 요약 (Performance):** **{p_stats.iloc[0]['제품명']}**이 전체 실적을 견인하고 있습니다. 반면 **{p_stats.iloc[-1]['제품명']}**은 성장세가 둔화된 성숙기 단계입니다.")
@@ -667,6 +666,7 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
 
 
 
